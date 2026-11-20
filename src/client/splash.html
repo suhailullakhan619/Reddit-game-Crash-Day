@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <link rel="stylesheet" type="text/css" href="splash.css" />
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, width=device-width, height=device-height, user-scalable=0"
+    />
+    <title>Crash Day</title>
+  </head>
+  <body class="app">
+    <svg class="canopy" viewBox="0 0 400 120" preserveAspectRatio="none" aria-hidden="true">
+      <path
+        d="M0 120 L0 70 L18 52 L34 66 L52 40 L70 60 L88 34 L110 58 L128 44 L146 62 L166 30 L186 56 L204 46 L224 64 L244 36 L262 58 L282 42 L300 62 L320 38 L342 60 L360 46 L380 64 L400 50 L400 120 Z"
+      />
+    </svg>
+    <main class="content">
+      <p class="eyebrow" id="day-label">Today's crash</p>
+      <h1 class="title">Crash Day</h1>
+      <p class="cause" id="cause"></p>
+      <button class="start-button" id="start-button">Board the flight</button>
+      <p class="sub">Survive 5 days in the jungle. Same crash for everyone today.</p>
+    </main>
+    <script type="module" src="splash.ts" defer></script>
+  </body>
+</html>
