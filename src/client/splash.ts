@@ -1,6 +1,6 @@
 import { requestExpandedMode } from '@devvit/web/client';
 import { CHALLENGE_INFO, isChallenge } from '../shared/challenge';
-import { CAUSE_LABEL, dailyFor } from '../shared/daily';
+import { CAUSE_LABEL, dailyFor, type Daily } from '../shared/daily';
 
 // '2026-11-20' -> 'Nov 20' (dayKey is a UTC date)
 function shortDate(dayKey: string) {
@@ -18,14 +18,17 @@ if (startButton instanceof HTMLButtonElement) {
   });
 }
 
-const dayLabel = document.getElementById('day-label');
-if (dayLabel) dayLabel.textContent = `Today's crash · ${shortDate(daily.dayKey)}`;
-
-const first = document.getElementById('cause-first');
-if (first) first.textContent = CAUSE_LABEL[daily.cause];
-
-const second = document.getElementById('cause-second');
-if (second) second.textContent = CAUSE_LABEL[daily.second].toLowerCase();
+// Each post keeps the crash of the day it was posted; the server says which day that is.
+function showDaily(d: Daily) {
+  const today = d.dayKey === dailyFor(new Date()).dayKey;
+  const dayLabel = document.getElementById('day-label');
+  if (dayLabel) dayLabel.textContent = `${today ? "Today's crash" : 'Crash of'} · ${shortDate(d.dayKey)}`;
+  const first = document.getElementById('cause-first');
+  if (first) first.textContent = CAUSE_LABEL[d.cause];
+  const second = document.getElementById('cause-second');
+  if (second) second.textContent = CAUSE_LABEL[d.second].toLowerCase();
+}
+showDaily(daily);
 
 // Community line + personal streak from the server (silently skipped offline).
 type SplashInit = {
@@ -33,12 +36,14 @@ type SplashInit = {
   streak?: { count: number };
   bestToday?: number | null;
   challenge?: string;
+  daily?: Daily;
 };
 
 void fetch('/api/init')
   .then((r) => (r.ok ? (r.json() as Promise<SplashInit>) : null))
   .then((data) => {
     if (!data?.stats) return;
+    if (data.daily && data.daily.cause in CAUSE_LABEL && data.daily.second in CAUSE_LABEL) showDaily(data.daily);
     // today's community-voted challenge, under the tagline
     if (isChallenge(data.challenge)) {
       const info = CHALLENGE_INFO[data.challenge];

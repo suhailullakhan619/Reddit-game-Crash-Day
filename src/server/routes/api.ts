@@ -3,7 +3,7 @@ import { context, reddit } from '@devvit/web/server';
 import type { EventRequest, InitResponse, OkResponse, ResultResponse, VoteRequest, VoteResponse } from '../../shared/api';
 import { isChallenge } from '../../shared/challenge';
 import { dailyFor } from '../../shared/daily';
-import { bestToday, castVote, getChallenge, getGraves, getStats, getStreak, recordEvent, recordResult, recordStart, sanitize, shareText, voteState } from '../core/game';
+import { bestToday, castVote, getChallenge, getGraves, getStats, getStreak, postDay, recordEvent, recordResult, recordStart, sanitize, shareText, voteState } from '../core/game';
 
 // Usernames that get the in-game test panel (developer testing on real phones).
 const TESTERS = new Set(['Big-Part-2274']);
@@ -23,19 +23,20 @@ api.get('/init', async (c) => {
   }
   try {
     const username = await reddit.getCurrentUsername();
+    const day = await postDay(postId);
     const [stats, streak, best, challenge, graves, vote] = await Promise.all([
-      getStats(),
+      getStats(day),
       username ? getStreak(username) : Promise.resolve({ count: 0, best: 0, last: null }),
-      username ? bestToday(username) : Promise.resolve(null),
-      getChallenge(),
-      getGraves(),
+      username ? bestToday(username, day) : Promise.resolve(null),
+      getChallenge(day),
+      getGraves(day),
       voteState(username),
     ]);
     return c.json<InitResponse>({
       type: 'init',
       postId,
       username: username ?? 'anonymous',
-      daily: dailyFor(new Date()),
+      daily: dailyFor(new Date(`${day}T12:00:00Z`)),
       stats,
       streak,
       bestToday: best,
@@ -53,7 +54,7 @@ api.get('/init', async (c) => {
 
 // A run starts (the crash cinematic begins): counts toward "N crashed today".
 api.post('/start', async (c) => {
-  await recordStart();
+  await recordStart(await postDay(context.postId));
   await recordEvent('crash_start');
   return c.json<OkResponse>({ ok: true });
 });
@@ -73,7 +74,7 @@ api.post('/result', async (c) => {
   try {
     const username = await reddit.getCurrentUsername();
     await recordEvent(run.rescued ? 'rescued' : 'death', run.cause ?? undefined);
-    const res = await recordResult(username, run);
+    const res = await recordResult(username, run, await postDay(context.postId));
     console.log(`result saved u=${username ?? 'anon'} score=${res.score} rank=${res.rank ?? '-'}/${res.players} streak=${res.streak.count} flair=${res.flair ?? '-'}`);
     return c.json<ResultResponse>(res);
   } catch (error) {
@@ -87,7 +88,7 @@ api.post('/share', async (c) => {
   const { postId } = context;
   const username = await reddit.getCurrentUsername();
   if (!postId || !username) return c.json<OkResponse>({ ok: false, message: 'Sign in to share your result.' }, 401);
-  const text = await shareText(username);
+  const text = await shareText(username, await postDay(postId));
   if (!text) return c.json<OkResponse>({ ok: false, message: 'Finish a run first.' }, 400);
   try {
     await reddit.submitComment({ id: postId, text, runAs: 'USER' });

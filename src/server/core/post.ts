@@ -1,17 +1,19 @@
 import { context, reddit, redis } from '@devvit/web/server';
 import { CHALLENGE_INFO } from '../../shared/challenge';
 import { causePair, dailyFor } from '../../shared/daily';
-import { getChallenge } from './game';
+import { bindPostDay, getChallenge } from './game';
 
 export const createPost = async () => {
   const d = dailyFor(new Date());
   // the community-voted challenge is locked in when the day's post goes up
   const challenge = CHALLENGE_INFO[await getChallenge(d.dayKey)].title;
   const date = new Date(`${d.dayKey}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-  return await reddit.submitCustomPost({
+  const post = await reddit.submitCustomPost({
     ...(context.subredditName ? { subredditName: context.subredditName } : {}),
     title: `Crash Day · ${date}: ${causePair(d)} over the jungle. Can you survive 5 days? (Challenge: ${challenge})`,
   });
+  await bindPostDay(post.id, d.dayKey);
+  return post;
 };
 
 // Called by the daily cron. Creates at most one post per UTC day, even if the job fires twice.

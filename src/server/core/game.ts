@@ -17,6 +17,7 @@ import { dayKeyFor } from '../../shared/daily';
 //   cd:{day}:voters        hash        username -> challenge id they voted for that day
 //   cd:{day}:graves        hash        username -> JSON {x, z, cause, day} of their latest death
 //   cd:badges:{user}       hash        badge id -> day first earned (no expiry)
+//   cd:post:{postId}       string      the UTC day a post belongs to (its crash, board and graves)
 
 const DAY_TTL = 60 * 60 * 24 * 8; // keep a week of history
 
@@ -29,6 +30,28 @@ export function today() {
 
 export function tomorrow() {
   return dayKeyFor(new Date(Date.now() + 24 * 60 * 60 * 1000));
+}
+
+// The day a post plays: each post keeps the crash, leaderboard and graves of the day it was
+// created, so an older post never silently switches to today's crash.
+export async function postDay(postId: typeof context.postId): Promise<string> {
+  if (!postId) return today();
+  const key = `cd:post:${postId}`;
+  const cached = await redis.get(key);
+  if (cached && /^d{4}-d{2}-d{2}$/.test(cached)) return cached;
+  let day = today();
+  try {
+    const post = await reddit.getPostById(postId);
+    day = dayKeyFor(post.createdAt);
+  } catch (e) {
+    console.warn('postDay lookup failed', String(e).slice(0, 120));
+  }
+  await redis.set(key, day);
+  return day;
+}
+
+export async function bindPostDay(postId: string, day: string) {
+  await redis.set(`cd:post:${postId}`, day);
 }
 
 function yesterday() {
@@ -91,13 +114,12 @@ export async function snoovatarFor(username: string): Promise<string | null> {
   return url;
 }
 
-export async function bestToday(username: string): Promise<number | null> {
-  const s = await redis.zScore(`cd:${today()}:lb`, username);
+export async function bestToday(username: string, day = today()): Promise<number | null> {
+  const s = await redis.zScore(`cd:${day}:lb`, username);
   return s === undefined ? null : s;
 }
 
-export async function recordStart() {
-  const day = today();
+export async function recordStart(day = today()) {
   await redis.hIncrBy(`cd:${day}:stats`, 'crashed', 1);
   await touch(`cd:${day}:stats`);
 }
@@ -153,8 +175,7 @@ function flairFor(r: RunResult, streak: Streak): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
-export async function leaderboard(limit = 5): Promise<LeaderEntry[]> {
-  const day = today();
+export async function leaderboard(limit = 5, day = today()): Promise<LeaderEntry[]> {
   const top = await redis.zRange(`cd:${day}:lb`, 0, limit - 1, { by: 'rank', reverse: true });
   return Promise.all(
     top.map(async (m, i) => {
@@ -172,8 +193,7 @@ export async function leaderboard(limit = 5): Promise<LeaderEntry[]> {
   );
 }
 
-export async function recordResult(username: string | undefined, r: RunResult): Promise<ResultResponse> {
-  const day = today();
+export async function recordResult(username: string | undefined, r: RunResult, day = today()): Promise<ResultResponse> {
   const statsKey = `cd:${day}:stats`;
   const score = scoreFor(r);
   if (r.rescued) await redis.hIncrBy(statsKey, 'survived', 1);
@@ -245,7 +265,7 @@ export async function recordResult(username: string | undefined, r: RunResult): 
     streak,
     flair,
     stats: await getStats(day),
-    leaderboard: await leaderboard(5),
+    leaderboard: await leaderboard(5, day),
     me: username ? { username, snoovatar: await snoovatarFor(username) } : null,
     newBadges,
     badgeCount,
@@ -267,8 +287,8 @@ const CAUSE_TEXT: Record<DeathCause, string> = {
 };
 
 // Builds the comment from the stored result so players can't post arbitrary text through the app.
-export async function shareText(username: string): Promise<string | null> {
-  const raw = await redis.get(`cd:${today()}:last:${username}`);
+export async function shareText(username: string, day = today()): Promise<string | null> {
+  const raw = await redis.get(`cd:${day}:last:${username}`);
   if (!raw) return null;
   const r = JSON.parse(raw) as RunResult & { score: number };
   const mins = Math.floor(r.seconds / 60);
@@ -279,7 +299,7 @@ export async function shareText(username: string): Promise<string | null> {
   const kills = r.kills.snake + r.kills.boar + r.kills.gator;
   if (kills) extras.push(`${kills} animal${kills > 1 ? 's' : ''} fought off`);
   return [
-    `**Crash Day ${today()}** · ${outcome}`,
+    `**Crash Day ${day}** · ${outcome}`,
     '',
     `Survived ${mins}:${secs} · ${r.collected} items found${extras.length ? ' · ' + extras.join(' · ') : ''} · score ${r.score}`,
   ].join('\n');
@@ -331,8 +351,8 @@ export async function castVote(username: string, choice: ChallengeId): Promise<V
 // ---------------------------------------------------------------------------------------
 // Ghosts: where real players died today (at most 40, newest data per player)
 
-export async function getGraves(): Promise<Grave[]> {
-  const raw = await redis.hGetAll(`cd:${today()}:graves`);
+export async function getGraves(day = today()): Promise<Grave[]> {
+  const raw = await redis.hGetAll(`cd:${day}:graves`);
   const out: Grave[] = [];
   for (const [username, json] of Object.entries(raw)) {
     try {
