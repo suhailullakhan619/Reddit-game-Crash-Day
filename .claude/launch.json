@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "local-client",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/suhai/AppData/Local/Temp/claude/29b21cb310aba87c/56dfda0a-56a9-46c6-ad8d-d091721d49a3/scratchpad/serve.mjs",
+        "dist/client"
+      ],
+      "port": 4173
+    }
+  ]
+}
