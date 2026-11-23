@@ -6,7 +6,7 @@ import { survival } from './survival';
 export type ItemKind = 'wood' | 'stone' | 'berries' | 'water' | 'herb' | 'medkit' | 'flare' | 'meat';
 export type StartItem = 'knife' | 'medkit' | 'flare' | 'water';
 export type Phase = 'intro' | 'play' | 'dead' | 'rescued';
-export type DeathCause = 'tiger' | 'snake' | 'venom' | 'boar' | 'gator' | 'thirst' | 'hunger' | 'cold' | 'injuries';
+export type DeathCause = 'tiger' | 'snake' | 'venom' | 'boar' | 'gator' | 'wolf' | 'thirst' | 'hunger' | 'cold' | 'injuries';
 
 export const ITEM_LABEL: Record<ItemKind, string> = {
   wood: 'Wood',
@@ -25,6 +25,7 @@ export const DEATH_LABEL: Record<DeathCause, string> = {
   venom: 'Snake venom took hold',
   boar: 'Gored by a wild boar',
   gator: 'Dragged under by an alligator',
+  wolf: 'Run down by the wolf pack',
   thirst: 'Died of thirst',
   hunger: 'Starved',
   cold: 'Died of exposure',
@@ -60,7 +61,15 @@ export const run = {
   tigerDown: false,
   hurtFlash: 0, // 0..1, drives the red screen pulse
   poisoned: false, // viper venom: health drains until a med kit / poultice is used
-  kills: { snake: 0, boar: 0, gator: 0 } as Record<'snake' | 'boar' | 'gator', number>,
+  kills: { snake: 0, boar: 0, gator: 0, wolf: 0 } as Record<'snake' | 'boar' | 'gator' | 'wolf', number>,
+  legBroken: false, // a heavy hit can break a leg: slow until a splint is crafted
+  ateMeat: false,
+  cooked: false,
+  arrowHits: 0,
+  craftedWeapon: false,
+  firesBuilt: 0,
+  challengeDone: false,
+  blackbox: null as null | { x: number; z: number; taken: boolean },
   danger: 0, // 0..1, tiger proximity (heartbeat + music)
   dodgeNow: false, // tiger is winding up: show the dodge prompt
   nearby: null as { label: string } | null, // current interact target
@@ -108,6 +117,11 @@ export function damage(amount: number, cause: DeathCause) {
   if (run.phase !== 'play') return;
   survival.health = Math.max(0, survival.health - amount);
   run.lastHurt = cause;
+  // a heavy blow from a big animal can break a leg
+  if (!run.legBroken && amount >= 15 && (cause === 'tiger' || cause === 'boar' || cause === 'gator' || cause === 'wolf') && Math.random() < 0.3) {
+    run.legBroken = true;
+    toast('Your leg is broken! Craft a splint: 2 wood + 1 herb.');
+  }
   run.hurtFlash = Math.min(1, run.hurtFlash + amount / 30);
   if (survival.health <= 0) die(cause);
 }
@@ -125,7 +139,7 @@ export function rescue() {
   emit();
 }
 
-export type Recipe = { id: 'spear' | 'bow' | 'arrows' | 'campfire' | 'shelter' | 'medkit'; label: string; cost: Partial<Record<ItemKind, number>>; hint: string };
+export type Recipe = { id: 'spear' | 'bow' | 'arrows' | 'campfire' | 'shelter' | 'medkit' | 'splint'; label: string; cost: Partial<Record<ItemKind, number>>; hint: string };
 
 export const RECIPES: Recipe[] = [
   { id: 'spear', label: 'Spear', cost: { wood: 2, stone: 1 }, hint: 'Fight back' },
@@ -133,6 +147,7 @@ export const RECIPES: Recipe[] = [
   { id: 'arrows', label: '3 arrows', cost: { wood: 1, stone: 1 }, hint: 'Ammo for the bow' },
   { id: 'campfire', label: 'Campfire', cost: { wood: 4, stone: 3 }, hint: 'Warmth · keeps the tiger away' },
   { id: 'shelter', label: 'Lean-to shelter', cost: { wood: 5, herb: 2 }, hint: 'Stay warm · heal while resting' },
+  { id: 'splint', label: 'Leg splint', cost: { wood: 2, herb: 1 }, hint: 'Mends a broken leg' },
   { id: 'medkit', label: 'Herbal poultice', cost: { herb: 3 }, hint: '+35 health' },
 ];
 
@@ -140,6 +155,7 @@ export function canCraft(r: Recipe) {
   if (r.id === 'spear' && run.spear) return false;
   if (r.id === 'bow' && run.bow) return false;
   if (r.id === 'arrows' && !run.bow) return false;
+  if (r.id === 'splint' && !run.legBroken) return false;
   return Object.entries(r.cost).every(([k, n]) => run.inv[k as ItemKind] >= (n ?? 0));
 }
 
@@ -167,7 +183,15 @@ export function resetRun() {
   run.tigerDown = false;
   run.hurtFlash = 0;
   run.poisoned = false;
-  run.kills = { snake: 0, boar: 0, gator: 0 };
+  run.kills = { snake: 0, boar: 0, gator: 0, wolf: 0 };
+  run.legBroken = false;
+  run.ateMeat = false;
+  run.cooked = false;
+  run.arrowHits = 0;
+  run.craftedWeapon = false;
+  run.firesBuilt = 0;
+  run.challengeDone = false;
+  run.blackbox = null;
   run.danger = 0;
   run.dodgeNow = false;
   run.nearby = null;
@@ -218,7 +242,7 @@ export const debugReq = {
 
 // Every hostile animal registers here so the player's attack, the danger meter and the
 // dodge prompt work the same for all of them. Each creature updates its own entry per frame.
-export type CreatureKind = 'tiger' | 'snake' | 'boar' | 'gator';
+export type CreatureKind = 'tiger' | 'snake' | 'boar' | 'gator' | 'wolf';
 
 export type Creature = {
   kind: CreatureKind;

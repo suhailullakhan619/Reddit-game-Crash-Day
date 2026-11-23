@@ -23,6 +23,9 @@ import {
   type Recipe,
 } from './state';
 import { survival } from './survival';
+import { CHALLENGE_INFO } from '../../shared/challenge';
+import { challengeProgress, quest } from './quest';
+import { dragScroll } from './dragScroll';
 import { WATER_LEVEL, type World } from './world';
 
 const USABLE: ItemKind[] = ['water', 'berries', 'meat', 'medkit', 'flare', 'wood', 'stone', 'herb'];
@@ -46,6 +49,7 @@ const RECIPE_ICON: Record<Recipe['id'], string> = {
   bow: BOW_ICON,
   arrows: ARROW_ICON,
   shelter: 'M3 20L12 5l9 15M7 20l5-8 5 8M3 20h18',
+  splint: 'M9 3v18M15 3v18M6 7h12M6 12h12M6 17h12',
   campfire: 'M5 21l14-4M5 17l14 4M12 3c1 3 4 4 4 8a4 4 0 0 1-8 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-4 0-7z',
   medkit: ITEM_ICON.medkit,
 };
@@ -86,10 +90,12 @@ function consumeItem(kind: ItemKind) {
       break;
     case 'meat': {
       // cooking over a lit fire makes meat far more nourishing
+      run.ateMeat = true;
       const atFire = run.campfires.some((f) => !f.out && Math.hypot(f.x - playerPos.x, f.z - playerPos.z) < 3.5);
       if (atFire) {
         survival.hunger = Math.min(100, survival.hunger + 60);
         survival.health = Math.min(100, survival.health + 10);
+        run.cooked = true;
         sfxCraft();
         toast('Cooked over the fire. Hot, filling: +60 food, +10 health.');
       } else {
@@ -123,6 +129,7 @@ function craft(r: Recipe, world: World) {
       return;
     }
     run.campfires.push({ x, y, z, age: 0, out: false });
+    run.firesBuilt++;
   }
   if (r.id === 'shelter') {
     const x = playerPos.x + Math.sin(combat.facing) * 2.2;
@@ -136,6 +143,8 @@ function craft(r: Recipe, world: World) {
   }
   for (const c of costOf(r)) run.inv[c.kind] -= c.n;
   if (r.id === 'spear') run.spear = true;
+  if (r.id === 'spear' || r.id === 'bow') run.craftedWeapon = true;
+  if (r.id === 'splint') run.legBroken = false;
   if (r.id === 'bow') {
     run.bow = true;
     run.arrows += 4;
@@ -149,6 +158,8 @@ function craft(r: Recipe, world: World) {
       ? 'Fire lit. Warmth — and safety.'
       : r.id === 'shelter'
         ? 'Shelter built. Rest inside to stay warm and heal.'
+        : r.id === 'splint'
+          ? 'Leg splinted. You can run again.'
         : `Crafted ${r.label}.`
   );
   emit();
@@ -248,8 +259,9 @@ export function Hud({ world }: { world: World }) {
       if (craftPanel.current?.contains(t) || t.closest('.act-craft')) return;
       setCraftOpen(false);
     };
-    window.addEventListener('pointerdown', onDown);
-    return () => window.removeEventListener('pointerdown', onDown);
+    // capture phase: runs before anything else can swallow the tap
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
   }, [craftOpen]);
 
   // toast lifetime
@@ -260,6 +272,26 @@ export function Hud({ world }: { world: World }) {
     const id = window.setTimeout(() => setToastVisible(null), 2600);
     return () => window.clearTimeout(id);
   }, [toastId]);
+
+  // "ready to craft" hint: when a recipe becomes craftable for the first time, name it on
+  // screen next to the Craft button so players know what the button will offer
+  const ready = RECIPES.filter((r) => canCraft(r) && r.id !== 'arrows');
+  const readyKey = ready.map((r) => r.id).join(',');
+  const seenReady = useRef(new Set<string>());
+  const [craftHint, setCraftHint] = useState<string | null>(null);
+  useEffect(() => {
+    if (run.phase !== 'play') return;
+    const fresh = ready.find((r) => !seenReady.current.has(r.id));
+    for (const r of ready) seenReady.current.add(r.id);
+    if (!fresh) return;
+    setCraftHint(fresh.label);
+    const id = window.setTimeout(() => setCraftHint(null), 6000);
+    return () => window.clearTimeout(id);
+    // readyKey captures the list; ready itself is recomputed every render
+  }, [readyKey]);
+  useEffect(() => {
+    if (run.phase === 'intro') seenReady.current.clear();
+  });
 
   if (run.phase === 'intro') return null;
   const playing = run.phase === 'play';
@@ -295,6 +327,24 @@ export function Hud({ world }: { world: World }) {
           <span className="poison-tip">use a med kit</span>
         </div>
 
+        {playing && run.legBroken && (
+          <div className="poison injury on">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3l2 7-3 4 2 7M15 3l-2 7 3 4-2 7" />
+            </svg>
+            <span className="poison-label">Broken leg</span>
+            <span className="poison-tip">craft a splint</span>
+          </div>
+        )}
+
+        {playing && (
+          <div className={`quest-pill${run.challengeDone ? ' done' : ''}`} title={CHALLENGE_INFO[quest.id].goal}>
+            <span className="quest-star" aria-hidden="true">★</span>
+            <span className="quest-title">{CHALLENGE_INFO[quest.id].title}</span>
+            <span className="quest-prog">{challengeProgress()}</span>
+          </div>
+        )}
+
         {playing && items.length > 0 && (
           <div className="inventory">
             {items.map((k) => (
@@ -324,7 +374,7 @@ export function Hud({ world }: { world: World }) {
                 </svg>
               </button>
             </div>
-            <div className="recipes">
+            <div className="recipes" ref={dragScroll}>
               {RECIPES.map((r) => {
                 const ok = canCraft(r);
                 const owned = (r.id === 'spear' && run.spear) || (r.id === 'bow' && run.bow);
@@ -444,7 +494,20 @@ export function Hud({ world }: { world: World }) {
               <path d="M14 6l4 4-9 9H5v-4zM12 8l4 4" />
             </svg>
             <span>Craft</span>
+            {ready.length > 0 && !craftOpen && <b className="act-badge craft-badge">{ready.length}</b>}
           </button>
+          {craftHint && !craftOpen && (
+            <button
+              type="button"
+              className="craft-hint"
+              onPointerDown={tap(() => {
+                setCraftHint(null);
+                setCraftOpen(true);
+              })}
+            >
+              <b>{craftHint}</b> ready · tap to craft
+            </button>
+          )}
         </div>
       )}
     </>

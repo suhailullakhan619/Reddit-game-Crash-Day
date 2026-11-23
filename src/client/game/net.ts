@@ -1,4 +1,7 @@
-import type { GameEvent, OkResponse, ResultResponse, RunResult } from '../../shared/api';
+import type { GameEvent, OkResponse, ResultResponse, RunResult, VoteResponse } from '../../shared/api';
+import type { ChallengeId } from '../../shared/challenge';
+import { earnedBadges } from './quest';
+import { playerPos } from './shared';
 import { run } from './state';
 
 // Thin client for the Devvit server. Every call fails soft: the game must keep working
@@ -46,6 +49,10 @@ export function submitResult(): Promise<ResultResponse | null> {
     kills: run.kills,
     tigerDown: run.tigerDown,
     startItem: run.startItem,
+    challengeDone: run.challengeDone,
+    badges: earnedBadges(),
+    x: playerPos.x,
+    z: playerPos.z,
   };
   return post<ResultResponse>('/api/result', body);
 }
@@ -56,4 +63,8 @@ export function shareResult() {
 
 export function joinSubreddit() {
   return post<OkResponse>('/api/subscribe');
+}
+
+export function voteFor(choice: ChallengeId) {
+  return post<VoteResponse>('/api/vote', { choice });
 }

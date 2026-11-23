@@ -339,3 +339,16 @@ body {
   font-weight: 800;
   color: var(--cream);
 }
+
+/* today's community-voted challenge */
+.challenge {
+  margin: 4px 0 0;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(240, 163, 94, 0.14);
+  border: 1px solid rgba(240, 163, 94, 0.45);
+  color: #f2ead8;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+}

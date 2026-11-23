@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { gameClock, playerPos } from './shared';
 import { combat, creatures, debugReq, emit, rescue, run, type CreatureKind } from './state';
 import { survival } from './survival';
+import { weather } from './Weather';
 
 // Owner-only test panel (the server sets `tester` for allow-listed usernames).
 // Lets the developer reach animals and late-game moments on a real phone without
@@ -117,6 +118,32 @@ export function TestPanel() {
             })}
           >
             Materials
+          </button>
+          <button
+            type="button"
+            onClick={act(() => {
+              weather.forced = 30;
+            })}
+          >
+            Storm now
+          </button>
+          <button
+            type="button"
+            onClick={act(() => {
+              // night of day 3: the wolf pack comes out
+              const target = 2 + 0.85;
+              gameClock.elapsed = Math.max(gameClock.elapsed, (target - gameClock.startPhase) * gameClock.dayLength);
+            })}
+          >
+            Wolf night
+          </button>
+          <button
+            type="button"
+            onClick={act(() => {
+              run.legBroken = true;
+            })}
+          >
+            Break leg
           </button>
           <button type="button" onClick={act(() => rescue())}>
             Rescue now

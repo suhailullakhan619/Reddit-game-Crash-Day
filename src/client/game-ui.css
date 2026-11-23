@@ -1402,7 +1402,7 @@ button:focus-visible {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  touch-action: pan-y;
+  touch-action: none;
   padding: 20px 18px 16px;
   border-radius: 20px;
   background: var(--green);
@@ -2031,7 +2031,7 @@ button:focus-visible {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  touch-action: pan-y; /* body disables touch gestures for the game; let the card scroll */
+  touch-action: none; /* scrolled by dragScroll() in EndCard.tsx: webviews may not pan it natively */
   padding-top: max(12px, env(safe-area-inset-top));
   padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
@@ -2212,4 +2212,268 @@ button:focus-visible {
 .game.cine .threat-arrow,
 .game.cine .danger-edge {
   visibility: hidden;
+}
+
+/* ---------- storms ---------- */
+.storm-veil,
+.storm-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.storm-veil {
+  background: radial-gradient(ellipse at 50% 30%, rgba(40, 50, 60, 0.6), rgba(15, 20, 28, 0.95));
+}
+
+.rain.storm-rain {
+  opacity: 0;
+}
+
+.storm-flash {
+  background: rgba(225, 232, 255, 0.9);
+}
+
+/* ---------- broken leg badge (shares the poison pill layout) ---------- */
+.poison.injury {
+  background: rgba(92, 34, 24, 0.92);
+  border-color: #f0a35e;
+  animation: rise-in 0.25s ease-out both;
+}
+
+.poison.injury svg {
+  stroke: #ffc79a;
+}
+
+.poison.injury .poison-label {
+  color: #ffd9b8;
+}
+
+/* ---------- daily challenge pill ---------- */
+.quest-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 11px 4px 8px;
+  border-radius: 999px;
+  background: rgba(14, 18, 16, 0.62);
+  border: 1px solid rgba(240, 163, 94, 0.55);
+  font-size: var(--t-xs);
+  font-weight: 800;
+  color: var(--cream);
+  pointer-events: none;
+}
+
+.quest-star {
+  color: var(--orange);
+}
+
+.quest-title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.quest-prog {
+  color: var(--cream-dim);
+  font-weight: 700;
+}
+
+.quest-pill.done {
+  background: rgba(46, 86, 40, 0.88);
+  border-color: #a9d36a;
+}
+
+.quest-pill.done .quest-prog {
+  color: #dff7b4;
+}
+
+/* ---------- craft: ready badge + hint ---------- */
+.craft-badge {
+  background: var(--orange);
+}
+
+.craft-hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 52px);
+  max-width: 230px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--cream);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 700;
+  text-align: left;
+  pointer-events: auto;
+  box-shadow: var(--shadow);
+  animation:
+    rise-in 0.2s ease-out both,
+    pulse-ready 1.2s ease-in-out infinite;
+}
+
+.craft-hint b {
+  color: #b5541f;
+}
+
+/* ---------- end card: challenge, achievements, vote ---------- */
+.end-challenge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(242, 234, 216, 0.14);
+  font-size: var(--t-sm);
+  color: var(--cream-dim);
+  text-align: left;
+}
+
+.end-challenge b {
+  color: var(--cream);
+}
+
+.end-challenge .ec-star {
+  color: var(--cream-dim);
+  font-size: 1.1rem;
+}
+
+.end-challenge.done {
+  background: rgba(70, 120, 50, 0.22);
+  border-color: rgba(169, 211, 106, 0.6);
+  color: #dff7b4;
+}
+
+.end-challenge.done .ec-star {
+  color: var(--orange);
+}
+
+.end-achievements {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.ach {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(240, 163, 94, 0.14);
+  border: 1px solid rgba(240, 163, 94, 0.5);
+  font-size: var(--t-xs);
+  font-weight: 800;
+  color: var(--cream);
+}
+
+.ach i {
+  font-style: normal;
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--orange);
+  color: var(--ink);
+}
+
+.ach.new {
+  animation: rise-in 0.4s ease-out both;
+  box-shadow: 0 0 14px rgba(240, 163, 94, 0.45);
+}
+
+.ach-count {
+  font-size: var(--t-xs);
+  color: var(--cream-dim);
+}
+
+.end-vote {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ev-head {
+  font-size: var(--t-xs);
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+  text-align: left;
+}
+
+.ev-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ev-opt {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(242, 234, 216, 0.22);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--cream);
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ev-opt i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(240, 163, 94, 0.22);
+  transition: width 0.5s ease-out;
+}
+
+.ev-opt b,
+.ev-opt span {
+  position: relative;
+}
+
+.ev-opt span {
+  color: var(--cream-dim);
+  font-size: var(--t-xs);
+  text-align: right;
+}
+
+.ev-opt.mine {
+  border-color: var(--orange);
+}
+
+.ev-opt.mine b::after {
+  content: ' ✓';
+  color: var(--orange);
+}
+
+.ev-opt:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.ev-note {
+  font-size: var(--t-xs);
+  color: var(--cream-dim);
+}
+
+/* craft panel: the recipe grid scrolls when it is taller than the screen allows */
+.recipes {
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: none; /* dragScroll() in dragScroll.ts */
 }

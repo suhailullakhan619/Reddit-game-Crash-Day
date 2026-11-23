@@ -1,6 +1,8 @@
+import type { BadgeId, ChallengeId } from './challenge';
+import { CHALLENGE_BONUS } from './challenge';
 import type { Daily } from './daily';
 
-export type DeathCause = 'tiger' | 'snake' | 'venom' | 'boar' | 'gator' | 'thirst' | 'hunger' | 'cold' | 'injuries';
+export type DeathCause = 'tiger' | 'snake' | 'venom' | 'boar' | 'gator' | 'wolf' | 'thirst' | 'hunger' | 'cold' | 'injuries';
 
 export type LeaderEntry = {
   rank: number;
@@ -20,6 +22,12 @@ export type DayStats = {
 
 export type Streak = { count: number; best: number; last: string | null };
 
+// Where a real player died today: rendered as a grave in everyone's jungle.
+export type Grave = { username: string; x: number; z: number; cause: DeathCause; day: number };
+
+// Tomorrow's challenge vote: three options, live counts, and this player's pick.
+export type VoteState = { day: string; options: ChallengeId[]; counts: Record<string, number>; mine: ChallengeId | null };
+
 export type InitResponse = {
   type: 'init';
   postId: string;
@@ -29,6 +37,9 @@ export type InitResponse = {
   streak: Streak;
   bestToday: number | null;
   tester: boolean; // shows the owner-only test panel
+  challenge: ChallengeId; // today's challenge (locked in from yesterday's vote)
+  graves: Grave[];
+  vote: VoteState;
 };
 
 export type RunResult = {
@@ -37,9 +48,13 @@ export type RunResult = {
   rescued: boolean;
   cause: DeathCause | null;
   collected: number;
-  kills: { snake: number; boar: number; gator: number };
+  kills: { snake: number; boar: number; gator: number; wolf: number };
   tigerDown: boolean;
   startItem: string | null;
+  challengeDone: boolean;
+  badges: BadgeId[];
+  x: number; // where the run ended (a grave appears there for other players)
+  z: number;
 };
 
 export type ResultResponse = {
@@ -54,7 +69,13 @@ export type ResultResponse = {
   stats: DayStats;
   leaderboard: LeaderEntry[];
   me: { username: string; snoovatar: string | null } | null;
+  newBadges: BadgeId[]; // earned for the first time this run
+  badgeCount: number; // total distinct badges this player owns
+  vote: VoteState;
 };
+
+export type VoteRequest = { choice: ChallengeId };
+export type VoteResponse = { ok: true; vote: VoteState } | { ok: false; message: string };
 
 export type GameEvent =
   | 'crash_start'
@@ -76,6 +97,6 @@ export type OkResponse = { ok: true; message?: string } | { ok: false; message: 
 
 // Score: seconds survived, a big bonus for being rescued, a little for fighting back.
 export function scoreFor(r: RunResult) {
-  const kills = r.kills.snake + r.kills.boar + r.kills.gator;
-  return Math.round(r.seconds) + (r.rescued ? 500 : 0) + (r.tigerDown ? 100 : 0) + kills * 15;
+  const kills = r.kills.snake + r.kills.boar + r.kills.gator + r.kills.wolf;
+  return Math.round(r.seconds) + (r.rescued ? 500 : 0) + (r.tigerDown ? 100 : 0) + kills * 15 + (r.challengeDone ? CHALLENGE_BONUS : 0);
 }

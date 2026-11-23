@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { causePair, dailyFor, hasCause, type Daily } from '../../shared/daily';
-import type { InitResponse } from '../../shared/api';
+import type { Grave, InitResponse } from '../../shared/api';
+import { isChallenge } from '../../shared/challenge';
 import { Ambient } from './Ambient';
 import { Arrows, clearArrows } from './Arrows';
+import { Blackbox } from './Blackbox';
+import { Graves } from './Graves';
+import { placeBlackbox, quest } from './quest';
+import { Weather, WeatherOverlay, weather } from './Weather';
+import { Wolves } from './Wolves';
 import { Rescue } from './Rescue';
 import { Shelters } from './Shelters';
 import { SupplyDrops } from './SupplyDrops';
@@ -82,6 +88,7 @@ export function App() {
   const [clockEl, setClockEl] = useState<HTMLDivElement | null>(null);
   const [runId, setRunId] = useState(0);
   const [tester, setTester] = useState(false);
+  const [graves, setGraves] = useState<Grave[]>([]);
   // owner-only test tools exist only in playtest builds (__TEST_TOOLS__), and even there
   // stay invisible until a 1.5 s long-press on the clock
   const [testOpen, setTestOpen] = useState(false);
@@ -116,6 +123,8 @@ export function App() {
     gameClock.elapsed = 0;
     gameClock.startPhase = debugStartPhase() ?? (hasCause(daily, 'storm') ? 0.6 : 0.22);
     const list = createPickups(world, hasCause(daily, 'bird'));
+    weather.seed = daily.seed;
+    placeBlackbox(world);
     debugPickups = list;
     return list;
   }, [world, daily, runId]);
@@ -151,6 +160,9 @@ export function App() {
         if (cancelled) return;
         setServer('ok');
         setTester(data.tester === true);
+        if (isChallenge(data.challenge)) quest.id = data.challenge;
+        placeBlackbox(world);
+        setGraves(Array.isArray(data.graves) ? data.graves : []);
         if (data.daily.seed !== daily.seed) setDaily(data.daily);
       })
       .catch(() => !cancelled && setServer('offline'));
@@ -223,12 +235,17 @@ export function App() {
           <Gators world={world} />
           <Arrows world={world} />
           <Rescue world={world} />
+          <Wolves world={world} />
+          <Weather />
+          <Blackbox world={world} />
         </group>
+        <Graves world={world} graves={graves} />
         <PerfProbe statsEl={statsEl} clockEl={clockEl} />
         <Adaptive maxDpr={Math.min(q.dpr, window.devicePixelRatio || 1)} shadows={q.shadows} />
       </Canvas>
 
       <div className="vignette" />
+      <WeatherOverlay />
       {hasCause(daily, 'storm') && <div className="rain" />}
       <Controls />
 

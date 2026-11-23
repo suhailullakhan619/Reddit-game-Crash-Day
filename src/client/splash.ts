@@ -1,4 +1,5 @@
 import { requestExpandedMode } from '@devvit/web/client';
+import { CHALLENGE_INFO, isChallenge } from '../shared/challenge';
 import { CAUSE_LABEL, dailyFor } from '../shared/daily';
 
 // '2026-11-20' -> 'Nov 20' (dayKey is a UTC date)
@@ -31,12 +32,22 @@ type SplashInit = {
   stats?: { crashed: number; survived: number };
   streak?: { count: number };
   bestToday?: number | null;
+  challenge?: string;
 };
 
 void fetch('/api/init')
   .then((r) => (r.ok ? (r.json() as Promise<SplashInit>) : null))
   .then((data) => {
     if (!data?.stats) return;
+    // today's community-voted challenge, under the tagline
+    if (isChallenge(data.challenge)) {
+      const info = CHALLENGE_INFO[data.challenge];
+      const tag = document.querySelector('.tagline');
+      const ch = document.createElement('p');
+      ch.className = 'challenge';
+      ch.textContent = `★ Today's challenge: ${info.title} · ${info.goal.toLowerCase()}`;
+      tag?.parentElement?.insertBefore(ch, tag.nextSibling);
+    }
     const sub = document.querySelector('.sub');
     const line = document.createElement('p');
     line.className = 'community';

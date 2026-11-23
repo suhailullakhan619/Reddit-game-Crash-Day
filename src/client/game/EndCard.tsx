@@ -2,8 +2,11 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { context, navigateTo, showToast } from '@devvit/web/client';
 import { causePair, type Daily } from '../../shared/daily';
 import { sfxWin } from './audio';
-import type { DeathCause, ResultResponse } from '../../shared/api';
-import { joinSubreddit, shareResult, submitResult } from './net';
+import type { DeathCause, ResultResponse, VoteState } from '../../shared/api';
+import { BADGE_INFO, CHALLENGE_BONUS, CHALLENGE_INFO, type ChallengeId } from '../../shared/challenge';
+import { earnedBadges, quest } from './quest';
+import { joinSubreddit, shareResult, submitResult, voteFor } from './net';
+import { dragScroll } from './dragScroll';
 import { RESCUE_CARD_AT } from './Rescue';
 import { DEATH_LABEL, getVersion, rescueFx, run, subscribe } from './state';
 
@@ -26,12 +29,14 @@ function plural(n: number, word: string) {
 
 const DAYS = [1, 2, 3, 4, 5];
 
+
 const KILLER: Record<DeathCause, string> = {
   tiger: 'Tiger',
   snake: 'Viper',
   venom: 'Venom',
   boar: 'Boar',
   gator: 'Alligator',
+  wolf: 'Wolves',
   thirst: 'Thirst',
   hunger: 'Hunger',
   cold: 'Cold',
@@ -101,6 +106,8 @@ export function EndCard({ daily, onRetry }: { daily: Daily; onRetry: () => void 
   const [pending, setPending] = useState(false);
   const [shared, setShared] = useState(false);
   const [joined, setJoined] = useState(false);
+  const [vote, setVote] = useState<VoteState | null>(null);
+  const [voting, setVoting] = useState(false);
   const submitted = useRef(false);
 
   // send the finished run once; the server answers with rank, streak, flair and the leaderboard
@@ -114,7 +121,10 @@ export function EndCard({ daily, onRetry }: { daily: Daily; onRetry: () => void 
     if (submitted.current) return;
     submitted.current = true;
     void submitResult().then((r) => {
-      if (r && r.type === 'result') setRes(r);
+      if (r && r.type === 'result') {
+        setRes(r);
+        setVote(r.vote);
+      }
     });
   }, [over]);
 
@@ -168,11 +178,23 @@ export function EndCard({ daily, onRetry }: { daily: Daily; onRetry: () => void 
     }
   };
 
-  const kills = run.kills.snake + run.kills.boar + run.kills.gator;
+  const kills = run.kills.snake + run.kills.boar + run.kills.gator + run.kills.wolf;
+  const badges = earnedBadges();
+  const castVote = (choice: ChallengeId) => {
+    if (voting) return;
+    setVoting(true);
+    void voteFor(choice).then((r) => {
+      setVoting(false);
+      if (r?.ok) {
+        setVote(r.vote);
+        toast(`Voted: ${CHALLENGE_INFO[choice].title} for tomorrow`);
+      } else toast(r?.message ?? 'Could not vote right now.');
+    });
+  };
   const dayReached = Math.min(run.day, 5);
 
   return (
-    <div className={`endcard ${rescued ? 'won' : 'lost'}`}>
+    <div className={`endcard ${rescued ? 'won' : 'lost'}`} ref={dragScroll}>
       <div className="end-inner" role="dialog" aria-modal="true" aria-labelledby="end-title">
         <div className="end-brand">
           Crash <span>Day</span>
@@ -219,6 +241,26 @@ export function EndCard({ daily, onRetry }: { daily: Daily; onRetry: () => void 
             {run.kills.snake > 0 && <span>{plural(run.kills.snake, 'viper')}</span>}
             {run.kills.boar > 0 && <span>{plural(run.kills.boar, 'boar')}</span>}
             {run.kills.gator > 0 && <span>{plural(run.kills.gator, 'alligator')}</span>}
+            {run.kills.wolf > 0 && <span>{plural(run.kills.wolf, 'wolf')}</span>}
+          </div>
+        )}
+
+        <div className={`end-challenge${run.challengeDone ? ' done' : ''}`}>
+          <span className="ec-star" aria-hidden="true">★</span>
+          <span>
+            Challenge · <b>{CHALLENGE_INFO[quest.id].title}</b>: {run.challengeDone ? `complete +${CHALLENGE_BONUS}` : CHALLENGE_INFO[quest.id].goal.toLowerCase()}
+          </span>
+        </div>
+
+        {badges.length > 0 && (
+          <div className="end-achievements" aria-label="Achievements">
+            {badges.map((b) => (
+              <span key={b} className={`ach${res?.newBadges.includes(b) ? ' new' : ''}`} title={BADGE_INFO[b].desc}>
+                {BADGE_INFO[b].title}
+                {res?.newBadges.includes(b) && <i>NEW</i>}
+              </span>
+            ))}
+            {res && res.badgeCount > 0 && <span className="ach-count">{res.badgeCount}/8 collected</span>}
           </div>
         )}
 
@@ -263,6 +305,33 @@ export function EndCard({ daily, onRetry }: { daily: Daily; onRetry: () => void 
                     {k.label} {k.pct}%
                   </i>
                 ))}
+              </div>
+            )}
+            {vote && (
+              <div className="end-vote">
+                <div className="ev-head">Vote tomorrow's challenge</div>
+                <div className="ev-options">
+                  {vote.options.map((o) => {
+                    const total = vote.options.reduce((n, k) => n + (vote.counts[k] ?? 0), 0);
+                    const n = vote.counts[o] ?? 0;
+                    const pct = total ? Math.round((n / total) * 100) : 0;
+                    return (
+                      <button
+                        key={o}
+                        type="button"
+                        className={`ev-opt${vote.mine === o ? ' mine' : ''}`}
+                        disabled={!res.me || voting}
+                        onClick={() => castVote(o)}
+                        title={CHALLENGE_INFO[o].goal}
+                      >
+                        <i style={{ width: `${vote.mine ? pct : 0}%` }} aria-hidden="true" />
+                        <b>{CHALLENGE_INFO[o].title}</b>
+                        <span>{vote.mine ? `${pct}%` : CHALLENGE_INFO[o].goal}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {!res.me && <div className="ev-note">Sign in to vote</div>}
               </div>
             )}
             <div className="end-community">

@@ -406,3 +406,30 @@ export function startRotor(): Loop | null {
     },
   };
 }
+
+// distant wolf howl: a rising then falling sine with a slow vibrato
+export function sfxHowl(delay = 0) {
+  const c = ac();
+  if (!c) return;
+  const t = c.currentTime + delay;
+  const o = c.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(280, t);
+  o.frequency.exponentialRampToValueAtTime(540, t + 0.7);
+  o.frequency.exponentialRampToValueAtTime(470, t + 1.6);
+  o.frequency.exponentialRampToValueAtTime(330, t + 2.3);
+  const vib = c.createOscillator();
+  vib.frequency.value = 5.5;
+  const vibGain = c.createGain();
+  vibGain.gain.value = 9;
+  vib.connect(vibGain).connect(o.frequency);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.12, t + 0.4);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4);
+  o.connect(g).connect(out());
+  o.start(t);
+  vib.start(t);
+  o.stop(t + 2.5);
+  vib.stop(t + 2.5);
+}

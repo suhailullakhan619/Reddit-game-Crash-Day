@@ -26,6 +26,8 @@ import {
   subscribe,
   toast,
 } from './state';
+import { tickChallenge } from './quest';
+import { weather } from './Weather';
 import { Survivor, type SurvivorHandle, type Weapon } from './Survivor';
 import { survival, tickSurvival } from './survival';
 import { WATER_LEVEL, type World } from './world';
@@ -50,6 +52,20 @@ function openCrate() {
   track('supply_crate');
   toast(`Supply crate: Med kit, 2 Water, 2 Berries, ${run.bow ? '4 arrows' : 'a Flare'}.`);
   emit();
+}
+
+// Lowest tree-crown underside above (x, z), or Infinity in the open.
+// Crown shapes match Vegetation.tsx: broadleaf (kind 0) and tall palm (kind 1).
+function canopyCeiling(world: World, x: number, z: number) {
+  let ceil = Infinity;
+  for (const t of world.trees) {
+    if (Math.abs(t.x - x) > 4 || Math.abs(t.z - z) > 4) continue;
+    const crownR = (t.kind === 1 ? 2.8 : 2.1) * t.s;
+    if (Math.hypot(t.x - x, t.z - z) > crownR) continue;
+    const trunkTop = world.heightAt(t.x, t.z) + (t.kind === 1 ? 7 : 4.4) * t.s;
+    ceil = Math.min(ceil, trunkTop - (t.kind === 1 ? 0.8 : 0.6) * t.s);
+  }
+  return ceil;
 }
 
 function dampAngle(a: number, b: number, k: number) {
@@ -79,6 +95,7 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
     walk: 0,
     speed: 0,
     camInit: false,
+    camH: 0, // smoothed camera height (dips under tree crowns)
     time: 0,
     dodge: 0, // time left in roll
     dodgeCd: 0,
@@ -127,6 +144,7 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
 
     if (playing) {
       run.timeAlive += dt;
+      tickChallenge();
       const day = 1 + Math.floor(gameClock.startPhase + gameClock.elapsed / gameClock.dayLength);
       if (day !== run.day) {
         track('day_survived', `day${Math.min(day - 1, 5)}`);
@@ -177,7 +195,8 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
 
     const ground = world.heightAt(s.x, s.z);
     const swimming = ground < WATER_LEVEL - 0.7;
-    const top = swimming ? WALK * 0.45 : mag > 0.92 || input.sprint ? SPRINT : WALK;
+    // a broken leg means limping: slower, and no sprinting
+    const top = swimming ? WALK * 0.45 : run.legBroken ? WALK * 0.6 : mag > 0.92 || input.sprint ? SPRINT : WALK;
     s.speed += (mag * top - s.speed) * Math.min(1, dt * 10);
 
     // --- dodge roll ---------------------------------------------------------
@@ -348,6 +367,11 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
       // a lean-to keeps most of the night cold off and lets wounds heal while you rest
       const sheltered = run.shelters.some((h) => Math.hypot(h.x - s.x, h.z - s.z) < 2.6);
       const drain = tickSurvival(dt, inWater, nearFire, hard.drain(), hard.cold() * (sheltered ? 0.25 : 1));
+      // storms soak you (unless sheltered or by a fire) but you can drink the rain
+      if (weather.rain > 0.05) {
+        if (!sheltered && !nearFire) survival.warmth = Math.max(0, survival.warmth - dt * 1.1 * weather.rain);
+        survival.thirst = Math.min(100, survival.thirst + dt * 0.7 * weather.rain);
+      }
       if (sheltered && survival.hunger > 30 && survival.thirst > 30) survival.health = Math.min(100, survival.health + dt * 0.9);
       if (sheltered !== s.sheltered) {
         s.sheltered = sheltered;
@@ -388,14 +412,28 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
     for (const d of run.drops) {
       if (d.landed && !d.opened && Math.hypot(d.x - s.x, d.z - s.z) < 2.4) crate = d;
     }
-    const label = !playing ? null : crate ? 'Open supply crate' : best ? `Pick up ${ITEM_LABEL[best.kind]}` : null;
+    const bb = run.blackbox && !run.blackbox.taken && Math.hypot(run.blackbox.x - s.x, run.blackbox.z - s.z) < 2.2 ? run.blackbox : null;
+    const label = !playing
+      ? null
+      : bb
+        ? 'Take the flight recorder'
+        : crate
+          ? 'Open supply crate'
+          : best
+            ? `Pick up ${ITEM_LABEL[best.kind]}`
+            : null;
     if ((run.nearby?.label ?? null) !== label) {
       run.nearby = label ? { label } : null;
       emit();
     }
     if (actions.interact) {
       actions.interact = false;
-      if (crate && playing) {
+      if (bb && playing) {
+        bb.taken = true;
+        sfxCraft();
+        toast('You found the flight recorder!');
+        emit();
+      } else if (crate && playing) {
         crate.opened = true;
         openCrate();
       } else if (best && playing) {
@@ -432,13 +470,15 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
 
     // --- third-person camera ------------------------------------------------------------
     const cp = Math.cos(s.pitch);
-    // fixed follow distance: leaves near the lens dissolve instead (see nearFade in shared.ts),
-    // so the camera never zooms in and out while running through the jungle
+    // fixed follow distance (never zooms in and out while running); when the camera would sit
+    // inside a tree crown it slides down under the leaves instead, smoothed so it never bobs
     const dist = CAM_DIST;
     const tx = s.x + Math.sin(s.yaw) * cp * dist;
     const tz = s.z + Math.cos(s.yaw) * cp * dist;
-    let ty = s.y + 1.4 + Math.sin(s.pitch) * dist;
-    ty = Math.max(ty, world.heightAt(tx, tz) + 0.6, WATER_LEVEL + 0.4);
+    const free = s.y + 1.4 + Math.sin(s.pitch) * dist;
+    const want = Math.max(Math.min(free, canopyCeiling(world, tx, tz) - 0.4), s.y + 1.7);
+    s.camH = s.camInit ? s.camH + (want - s.camH) * Math.min(1, dt * (want < s.camH ? 7 : 2)) : want;
+    const ty = Math.max(s.camH, world.heightAt(tx, tz) + 0.6, WATER_LEVEL + 0.4);
     if (!s.camInit) {
       camera.position.set(tx, ty, tz);
       s.camInit = true;

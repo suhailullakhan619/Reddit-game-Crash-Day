@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import type { EventRequest, InitResponse, OkResponse, ResultResponse } from '../../shared/api';
+import type { EventRequest, InitResponse, OkResponse, ResultResponse, VoteRequest, VoteResponse } from '../../shared/api';
+import { isChallenge } from '../../shared/challenge';
 import { dailyFor } from '../../shared/daily';
-import { bestToday, getStats, getStreak, recordEvent, recordResult, recordStart, sanitize, shareText } from '../core/game';
+import { bestToday, castVote, getChallenge, getGraves, getStats, getStreak, recordEvent, recordResult, recordStart, sanitize, shareText, voteState } from '../core/game';
 
 // Usernames that get the in-game test panel (developer testing on real phones).
 const TESTERS = new Set(['Big-Part-2274']);
@@ -22,10 +23,13 @@ api.get('/init', async (c) => {
   }
   try {
     const username = await reddit.getCurrentUsername();
-    const [stats, streak, best] = await Promise.all([
+    const [stats, streak, best, challenge, graves, vote] = await Promise.all([
       getStats(),
       username ? getStreak(username) : Promise.resolve({ count: 0, best: 0, last: null }),
       username ? bestToday(username) : Promise.resolve(null),
+      getChallenge(),
+      getGraves(),
+      voteState(username),
     ]);
     return c.json<InitResponse>({
       type: 'init',
@@ -36,6 +40,9 @@ api.get('/init', async (c) => {
       streak,
       bestToday: best,
       tester: !!username && TESTERS.has(username),
+      challenge,
+      graves,
+      vote,
     });
   } catch (error) {
     console.error(`API Init Error for post ${postId}:`, error);
@@ -98,6 +105,17 @@ api.post('/share', async (c) => {
       return c.json<OkResponse>({ ok: false, message: 'Could not post the comment.' }, 500);
     }
   }
+});
+
+// Vote for tomorrow's challenge (one vote per player, can be changed).
+api.post('/vote', async (c) => {
+  const username = await reddit.getCurrentUsername();
+  if (!username) return c.json<VoteResponse>({ ok: false, message: 'Sign in to vote.' }, 401);
+  const body = await c.req.json<VoteRequest>().catch(() => null);
+  if (!body || !isChallenge(body.choice)) return c.json<VoteResponse>({ ok: false, message: 'Unknown option.' }, 400);
+  const vote = await castVote(username, body.choice);
+  if (!vote) return c.json<VoteResponse>({ ok: false, message: 'That option is not on the ballot.' }, 400);
+  return c.json<VoteResponse>({ ok: true, vote });
 });
 
 api.post('/subscribe', async (c) => {

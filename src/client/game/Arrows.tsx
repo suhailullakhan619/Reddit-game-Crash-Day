@@ -11,7 +11,7 @@ import type { World } from './world';
 const POOL = 8;
 const GRAVITY = 6;
 const ARROW_DMG = 1; // tiger has 3 hp, boar 2, gator 3, any hit kills a snake
-const HIT_R: Record<CreatureKind, number> = { tiger: 1.25, boar: 0.95, gator: 1.3, snake: 0.75 };
+const HIT_R: Record<CreatureKind, number> = { tiger: 1.25, boar: 0.95, gator: 1.3, snake: 0.75, wolf: 0.9 };
 
 type Shot = { x: number; y: number; z: number; vx: number; vy: number; vz: number; flying: boolean; life: number };
 
@@ -70,6 +70,7 @@ export function Arrows({ world }: { world: World }) {
             if (s.y < ground - 0.6 || s.y > ground + 2.2) continue;
             if (Math.hypot(s.x - c.x, s.z - c.z) < HIT_R[c.kind]) {
               c.pendingHit += ARROW_DMG;
+              run.arrowHits++;
               s.flying = false;
               s.life = 0; // arrow stays in the animal: just remove it
               break;
