@@ -1,83 +1,185 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
-  BufferAttribute,
-  CatmullRomCurve3,
-  Color,
+  Bone,
+  BoxGeometry,
+  BufferGeometry,
+  CanvasTexture,
   ConeGeometry,
-  MeshLambertMaterial,
+  Float32BufferAttribute,
+  Group,
+  Mesh,
   MeshBasicMaterial,
+  MeshLambertMaterial,
+  Sphere,
+  RepeatWrapping,
+  Skeleton,
+  SkinnedMesh,
   SphereGeometry,
-  TubeGeometry,
-  Vector3,
-  type BufferGeometry,
-  type Group,
+  SRGBColorSpace,
+  Uint16BufferAttribute,
 } from 'three';
 import { sfxHiss, sfxHit } from './audio';
 import { playerPos } from './shared';
+import { hard } from './difficulty';
 import { combat, createCreature, creatureSlot, damage, emit, run, toast } from './state';
 import { mulberry32, WATER_LEVEL, WORLD_HALF, type World } from './world';
 
-// Pit vipers coiled in the undergrowth. They never chase: walk around them.
-// Get too close and they rear up and hiss (dodge window), then strike. A bite poisons you
-// until you use a med kit or herbal poultice. One weapon hit kills.
+// Pit vipers: one skinned mesh each (body + head share a 14-bone spine), PBR scales
+// with a procedural diamond-back texture and bump map. They coil, rear up and strike.
+// A bite poisons you until you use a med kit or poultice. One weapon hit kills.
 
 const COUNT = 18;
-const VISIBLE = 55;
+const VISIBLE = 32;
+const LENGTH = 1.75;
+const BONES = 14;
+// spine bones run from the tail tip to the base of the head; the head rides the last bone
+const HEAD_START = 0.86;
+const SEG = (LENGTH * HEAD_START) / (BONES - 1);
+const RINGS = 84;
+const RADIAL = 12;
 
-// Coiled body: a tapered tube along a flat spiral that rises into the neck.
-function coilGeometry(): BufferGeometry {
-  const pts: Vector3[] = [];
-  const turns = 1.8;
-  const steps = 26;
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const a = t * turns * Math.PI * 2;
-    const r = 0.36 - t * 0.2;
-    pts.push(new Vector3(Math.cos(a) * r, 0.05 + t * 0.06, Math.sin(a) * r));
+// --- textures -------------------------------------------------------------
+function scaleTextures() {
+  const W = 128;
+  const H = 512;
+  const col = document.createElement('canvas');
+  col.width = W;
+  col.height = H;
+  const g = col.getContext('2d')!;
+  // base: olive-brown back, cream belly (u=0.25 is the top of the body, u=0.75 the belly)
+  const grad = g.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, '#5e5a2c');
+  grad.addColorStop(0.25, '#6f6a33');
+  grad.addColorStop(0.55, '#7d7445');
+  grad.addColorStop(0.68, '#cfc28c');
+  grad.addColorStop(0.82, '#d8cc96');
+  grad.addColorStop(0.95, '#7d7445');
+  grad.addColorStop(1, '#5e5a2c');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  // dark diamond saddles down the spine
+  const rng = mulberry32(7);
+  for (let y = 0; y < H; y += 48) {
+    const cx = W * 0.25;
+    const w = W * 0.22;
+    const h = 26;
+    g.fillStyle = '#26220f';
+    g.beginPath();
+    g.moveTo(cx, y);
+    g.lineTo(cx + w, y + h);
+    g.lineTo(cx, y + h * 2);
+    g.lineTo(cx - w, y + h);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#8b7f40';
+    g.beginPath();
+    g.moveTo(cx, y + 8);
+    g.lineTo(cx + w * 0.55, y + h);
+    g.lineTo(cx, y + h * 2 - 8);
+    g.lineTo(cx - w * 0.55, y + h);
+    g.closePath();
+    g.fill();
+    // flank blotches
+    g.fillStyle = 'rgba(38, 34, 15, 0.8)';
+    for (const fx of [W * 0.52, W * 0.98]) {
+      g.beginPath();
+      g.ellipse(fx, y + h + (rng() - 0.5) * 8, 7, 9, 0, 0, Math.PI * 2);
+      g.fill();
+    }
   }
-  // neck rises from the centre of the coil
-  pts.push(new Vector3(0.05, 0.2, 0.06));
-  pts.push(new Vector3(0.06, 0.32, 0.16));
-  const curve = new CatmullRomCurve3(pts);
-  const tube = new TubeGeometry(curve, 90, 0.055, 7, false);
-  // taper: thin tail at the start, thicker body, slightly thinner neck
-  const p = tube.attributes.position!;
-  const cols = new Float32Array(p.count * 3);
-  const olive = new Color('#6f6a2e');
-  const dark = new Color('#2a2814');
-  const belly = new Color('#d8cc94');
-  const c = new Color();
-  const ringVerts = 8;
-  for (let i = 0; i < p.count; i++) {
-    const ring = Math.floor(i / ringVerts);
-    const t = ring / 90;
-    const center = curve.getPointAt(Math.min(1, t));
-    const taper = t < 0.25 ? 0.35 + (t / 0.25) * 0.65 : t > 0.85 ? 1 - (t - 0.85) * 1.6 : 1;
-    const vx = p.getX(i) - center.x;
-    const vy = p.getY(i) - center.y;
-    const vz = p.getZ(i) - center.z;
-    p.setXYZ(i, center.x + vx * taper, center.y + vy * taper * 0.85, center.z + vz * taper);
-    // diamond-back pattern
-    const around = (i % ringVerts) / ringVerts;
-    const diamond = Math.abs(((t * 34) % 2) - 1) + Math.abs(around - 0.25) * 2;
-    c.copy(olive);
-    if (diamond < 0.75) c.copy(dark);
-    if (vy < -0.025) c.copy(belly);
-    cols[i * 3] = c.r;
-    cols[i * 3 + 1] = c.g;
-    cols[i * 3 + 2] = c.b;
+  // scales bump: a grid of small overlapping ellipses
+  const bump = document.createElement('canvas');
+  bump.width = W;
+  bump.height = H;
+  const b = bump.getContext('2d')!;
+  b.fillStyle = '#404040';
+  b.fillRect(0, 0, W, H);
+  for (let y = 0; y < H; y += 8) {
+    for (let x = (y / 8) % 2 ? 4 : 0; x < W; x += 8) {
+      const r = b.createRadialGradient(x, y, 0, x, y, 5);
+      r.addColorStop(0, '#d0d0d0');
+      r.addColorStop(1, '#404040');
+      b.fillStyle = r;
+      b.beginPath();
+      b.ellipse(x, y, 4.5, 5.5, 0, 0, Math.PI * 2);
+      b.fill();
+    }
   }
-  tube.setAttribute('color', new BufferAttribute(cols, 3));
-  tube.computeVertexNormals();
-  return tube;
+  const map = new CanvasTexture(col);
+  map.colorSpace = SRGBColorSpace;
+  map.wrapS = map.wrapT = RepeatWrapping;
+  const bumpMap = new CanvasTexture(bump);
+  bumpMap.wrapS = bumpMap.wrapT = RepeatWrapping;
+  return { map, bumpMap };
 }
 
-type SnakeSpot = { x: number; z: number; r: number };
+// --- skinned body ---------------------------------------------------------
+// Built straight along +Z from tail tip (z=0) to snout (z=LENGTH).
+function bodyGeometry() {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const skinI: number[] = [];
+  const skinW: number[] = [];
+  for (let r = 0; r <= RINGS; r++) {
+    const u = r / RINGS;
+    const z = u * LENGTH;
+    let rad: number;
+    let wx = 1;
+    let hy = 0.85;
+    if (u < 0.3) rad = 0.008 + (u / 0.3) * 0.05;
+    else if (u < 0.74) rad = 0.058 + Math.sin(((u - 0.3) / 0.44) * Math.PI) * 0.012;
+    else if (u < 0.85) rad = 0.058 - ((u - 0.74) / 0.11) * 0.022; // neck
+    else {
+      // triangular viper head: wide jowls, flat top, tapering snout
+      const k = (u - 0.85) / 0.15;
+      rad = 0.036 + Math.sin(Math.min(1, k * 1.6) * Math.PI * 0.5) * 0.03 - Math.max(0, k - 0.55) * 0.12;
+      rad = Math.max(0.01, rad);
+      wx = 1.25;
+      hy = 0.55;
+    }
+    for (let a = 0; a <= RADIAL; a++) {
+      const ang = (a / RADIAL) * Math.PI * 2;
+      const s = Math.sin(ang);
+      const x = Math.cos(ang) * rad * wx;
+      const y = s * rad * hy * (s < 0 ? 0.75 : 1); // flatter belly
+      pos.push(x, y + rad * 0.6, z);
+      uv.push(a / RADIAL, u * 6);
+      // two-bone weights along the spine; head rides the last bone
+      const f = Math.min(BONES - 1, z / SEG);
+      const i0 = Math.min(BONES - 1, Math.floor(f));
+      const i1 = Math.min(BONES - 1, i0 + 1);
+      const w = f - i0;
+      skinI.push(i0, i1, 0, 0);
+      skinW.push(1 - w, w, 0, 0);
+    }
+  }
+  for (let r = 0; r < RINGS; r++) {
+    for (let a = 0; a < RADIAL; a++) {
+      const p0 = r * (RADIAL + 1) + a;
+      const p1 = p0 + RADIAL + 1;
+      idx.push(p0, p1, p0 + 1, p0 + 1, p1, p1 + 1);
+    }
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+  geo.setAttribute('skinIndex', new Uint16BufferAttribute(skinI, 4));
+  geo.setAttribute('skinWeight', new Float32BufferAttribute(skinW, 4));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  // the coiled pose is much more compact than the bind pose; keep culling generous
+  geo.boundingSphere!.radius = LENGTH;
+  return geo;
+}
 
-function placeSnakes(world: World): SnakeSpot[] {
+type Spot = { x: number; z: number; r: number };
+
+function placeSnakes(world: World): Spot[] {
   const rng = mulberry32(world.seed ^ 0x2c1b3c6d);
-  const out: SnakeSpot[] = [];
+  const out: Spot[] = [];
   for (let i = 0; i < 4000 && out.length < COUNT; i++) {
     const x = (rng() * 2 - 1) * (WORLD_HALF - 12);
     const z = (rng() * 2 - 1) * (WORLD_HALF - 12);
@@ -85,21 +187,55 @@ function placeSnakes(world: World): SnakeSpot[] {
     if (h < WATER_LEVEL + 0.4 || h > 8) continue;
     if (Math.hypot(x - world.wreck.x, z - world.wreck.z) < 20) continue;
     if (out.some((s) => Math.hypot(s.x - x, s.z - z) < 14)) continue;
-    // vipers like the forest edge
     if (world.detail(x, z) < 0.35 && rng() < 0.6) continue;
     out.push({ x, z, r: rng() * Math.PI * 2 });
   }
   return out;
 }
 
-function Snake({ spot, world, geo, mats }: { spot: SnakeSpot; world: World; geo: ReturnType<typeof useGeos>; mats: ReturnType<typeof useMats> }) {
+type Shared = {
+  geo: BufferGeometry;
+  mat: MeshLambertMaterial;
+  eyeGeo: SphereGeometry;
+  eyeMat: MeshLambertMaterial;
+  pupilGeo: BoxGeometry;
+  dark: MeshBasicMaterial;
+  tongueGeo: ConeGeometry;
+  tongueMat: MeshBasicMaterial;
+};
+
+type Mode = 'coiled' | 'alert' | 'strike' | 'cooldown' | 'dead';
+
+function Snake({ spot, world, shared }: { spot: Spot; world: World; shared: Shared }) {
   const root = useRef<Group>(null);
-  const head = useRef<Group>(null);
-  const tongue = useRef<Group>(null);
   const me = useMemo(() => createCreature('snake', spot.x, spot.z), [spot]);
   useEffect(creatureSlot(me), [me]);
-  const st = useRef({ mode: 'coiled' as 'coiled' | 'alert' | 'strike' | 'cooldown' | 'dead', t: 0, rear: 0, lunge: 0, facing: spot.r, bit: false });
   const y = useMemo(() => world.heightAt(spot.x, spot.z), [world, spot]);
+
+  // one skeleton per snake; geometry + materials are shared
+  const rig = useMemo(() => {
+    const bones: Bone[] = [];
+    for (let i = 0; i < BONES; i++) {
+      const b = new Bone();
+      b.position.set(0, 0, i === 0 ? 0 : SEG);
+      if (i > 0) bones[i - 1]!.add(b);
+      bones.push(b);
+    }
+    const mesh = new SkinnedMesh(shared.geo, shared.mat);
+    mesh.add(bones[0]!);
+    mesh.updateMatrixWorld(true); // bones need world matrices before bind() computes inverses
+    mesh.bind(new Skeleton(bones));
+    // fixed generous bounds around the rig so snakes off-screen skip skinning + draw
+    mesh.boundingSphere = new Sphere(shared.geo.boundingSphere?.center.clone(), LENGTH * 1.5);
+    // eyes, slit pupils and tongue ride the head bone
+    const head = bones[BONES - 1]!;
+    for (const side of [1, -1]) head.add(makeEye(shared, side));
+    const tongue = makeTongue(shared);
+    head.add(tongue);
+    return { mesh, bones, tongue };
+  }, [shared]);
+
+  const st = useRef({ mode: 'coiled' as Mode, t: 0, rear: 0, lunge: 0, facing: spot.r, bit: false, roll: 0 });
 
   useFrame((state, rawDt) => {
     const dt = Math.min(rawDt, 0.05);
@@ -131,7 +267,7 @@ function Snake({ spot, world, geo, mats }: { spot: SnakeSpot; world: World; geo:
 
     switch (s.mode) {
       case 'coiled':
-        if (playing && dist < 4.6) {
+        if (playing && dist < 4.6 * hard.sense()) {
           s.mode = 'alert';
           s.t = 0;
           sfxHiss();
@@ -139,9 +275,8 @@ function Snake({ spot, world, geo, mats }: { spot: SnakeSpot; world: World; geo:
         break;
       case 'alert':
         s.facing = Math.atan2(dx, dz);
-        if (dist > 6.5) {
-          s.mode = 'coiled';
-        } else if (s.t > 0.75 && dist < 2.7) {
+        if (dist > 6.5) s.mode = 'coiled';
+        else if (s.t > 0.75 * hard.windup() && dist < 2.7) {
           s.mode = 'strike';
           s.t = 0;
           s.bit = false;
@@ -151,7 +286,7 @@ function Snake({ spot, world, geo, mats }: { spot: SnakeSpot; world: World; geo:
         if (!s.bit && s.t > 0.09) {
           s.bit = true;
           if (dist < 2.8 && combat.invuln <= 0 && playing) {
-            damage(10, 'snake');
+            damage(10 * hard.dmg(), 'snake');
             if (!run.poisoned) {
               run.poisoned = true;
               toast('Venom! Use a med kit or make a poultice from herbs.');
@@ -175,83 +310,107 @@ function Snake({ spot, world, geo, mats }: { spot: SnakeSpot; world: World; geo:
         break;
     }
 
-    // creature entry
     me.windup = s.mode === 'alert' && s.t > 0.25 && dist < 3.5;
-    me.danger = s.mode === 'dead' ? 0 : s.mode === 'coiled' ? 0 : 0.55 + (me.windup ? 0.4 : 0);
+    me.danger = s.mode === 'dead' || s.mode === 'coiled' ? 0 : 0.55 + (me.windup ? 0.4 : 0);
 
-    // animation
-    const rearTarget = s.mode === 'alert' || s.mode === 'strike' ? 1 : 0;
-    s.rear += (rearTarget - s.rear) * Math.min(1, dt * 8);
-    const lungeTarget = s.mode === 'strike' ? Math.sin(Math.min(1, s.t / 0.35) * Math.PI) : 0;
-    s.lunge = lungeTarget;
-    g.position.set(spot.x, y + (s.mode === 'dead' ? -0.05 : 0), spot.z);
-    let d = s.facing - g.rotation.y;
+    // --- pose the spine -------------------------------------------------
+    const t = state.clock.elapsedTime;
+    const rearT = s.mode === 'alert' || s.mode === 'strike' ? 1 : 0;
+    s.rear += (rearT - s.rear) * Math.min(1, dt * 7);
+    s.lunge = s.mode === 'strike' ? Math.sin(Math.min(1, s.t / 0.35) * Math.PI) : 0;
+    const dead = s.mode === 'dead';
+    const breathe = Math.sin(t * 1.4 + spot.r) * 0.03;
+    let heading = 0;
+    rig.bones.forEach((b, i) => {
+      let by: number;
+      let bx = 0;
+      if (dead) {
+        by = i < BONES - 1 ? 0.18 * Math.sin(i * 0.9) : 0;
+      } else if (i < BONES - 4) {
+        // the coil: tighter toward the tail
+        by = 0.78 - i * 0.035 + breathe;
+        bx = -0.035;
+      } else if (i < BONES - 1) {
+        // neck: S-curve that rears up when alarmed, straightens to strike
+        const k = i - (BONES - 4);
+        by = (0.35 - k * 0.15) * (1 - s.lunge);
+        bx = -0.15 - s.rear * (0.55 - k * 0.12) + s.lunge * 0.5;
+      } else {
+        // head stays level with the ground
+        bx = 0.25 + s.rear * 0.95 - s.lunge * 0.3;
+        by = Math.sin(t * (s.mode === 'alert' ? 5 : 1.2)) * (s.mode === 'alert' ? 0.12 : 0.04);
+      }
+      b.rotation.set(bx, by, 0);
+      heading += by;
+    });
+    rig.tongue.visible = !dead && Math.sin(t * (s.mode === 'alert' ? 16 : 6) + spot.r) > 0.6;
+
+    // rotate the whole coil so the head points where the snake is looking
+    let d = s.facing - heading - g.rotation.y;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
     g.rotation.y += d * Math.min(1, dt * 6);
-    g.rotation.z = s.mode === 'dead' ? Math.min(Math.PI, g.rotation.z + dt * 6) : 0;
-    if (head.current) {
-      const t = state.clock.elapsedTime;
-      const sway = s.mode === 'alert' ? Math.sin(t * 5) * 0.06 : Math.sin(t * 1.2 + spot.r) * 0.02;
-      head.current.position.set(0.06 + sway, 0.32 + s.rear * 0.22, 0.18 + s.rear * 0.05 + s.lunge * 0.9);
-      head.current.rotation.x = -0.15 + s.rear * 0.1 - s.lunge * 0.3;
-    }
-    if (tongue.current) {
-      const flick = s.mode !== 'dead' && Math.sin(state.clock.elapsedTime * (s.mode === 'alert' ? 16 : 6) + spot.r) > 0.6;
-      tongue.current.visible = flick;
-    }
+    s.roll = dead ? Math.min(Math.PI, s.roll + dt * 6) : 0;
+    g.rotation.z = s.roll;
+    g.position.set(spot.x + Math.sin(s.facing) * s.lunge * 0.4, y + 0.01, spot.z + Math.cos(s.facing) * s.lunge * 0.4);
   });
 
   return (
     <group ref={root} visible={false}>
-      <mesh geometry={geo.coil} material={mats.body} />
-      {/* rearing neck segment links coil to head */}
-      <group ref={head}>
-        <mesh geometry={geo.head} material={mats.head} />
-        <mesh geometry={geo.eye} material={mats.eye} position={[0.045, 0.03, 0.06]} />
-        <mesh geometry={geo.eye} material={mats.eye} position={[-0.045, 0.03, 0.06]} />
-        <group ref={tongue} position={[0, -0.01, 0.15]}>
-          <mesh geometry={geo.tongue} material={mats.tongue} rotation-y={0.25} />
-          <mesh geometry={geo.tongue} material={mats.tongue} rotation-y={-0.25} />
-        </group>
+      {/* center the coil roughly on the spot */}
+      <group position={[-0.3, 0, -0.12]} scale={1.25}>
+        <primitive object={rig.mesh} />
       </group>
     </group>
   );
 }
 
-function useGeos() {
-  return useMemo(() => {
-    // flat, triangular viper head
-    const head = new SphereGeometry(0.085, 10, 8);
-    head.scale(0.95, 0.55, 1.35);
-    const eye = new SphereGeometry(0.018, 6, 5);
-    const tongue = new ConeGeometry(0.006, 0.09, 3);
-    tongue.rotateX(Math.PI / 2);
-    tongue.translate(0, 0, 0.045);
-    return { coil: coilGeometry(), head, eye, tongue };
-  }, []);
+// Amber eye with a vertical slit pupil, mounted on the head bone.
+function makeEye(shared: Shared, side: number) {
+  const g = new Group();
+  const eye = new Mesh(shared.eyeGeo, shared.eyeMat);
+  eye.position.set(side * 0.048, 0.062, 0.1);
+  const pupil = new Mesh(shared.pupilGeo, shared.dark);
+  pupil.position.set(side * 0.06, 0.062, 0.102);
+  g.add(eye, pupil);
+  return g;
 }
 
-function useMats() {
-  return useMemo(
-    () => ({
-      body: new MeshLambertMaterial({ vertexColors: true }),
-      head: new MeshLambertMaterial({ color: '#5d5824' }),
-      eye: new MeshBasicMaterial({ color: '#d9b62c' }),
-      tongue: new MeshBasicMaterial({ color: '#b0222c' }),
-    }),
-    []
-  );
+// Forked tongue that flicks out of the snout.
+function makeTongue(shared: Shared) {
+  const g = new Group();
+  for (const side of [1, -1]) {
+    const m = new Mesh(shared.tongueGeo, shared.tongueMat);
+    m.position.set(0, 0.03, 0.22);
+    m.rotation.y = side * 0.22;
+    g.add(m);
+  }
+  return g;
 }
+
 
 export function Snakes({ world }: { world: World }) {
   const spots = useMemo(() => placeSnakes(world), [world]);
-  const geo = useGeos();
-  const mats = useMats();
+  const shared = useMemo<Shared>(() => {
+    const tex = scaleTextures();
+    const tongueGeo = new ConeGeometry(0.005, 0.08, 3);
+    tongueGeo.rotateX(Math.PI / 2);
+    tongueGeo.translate(0, 0, 0.04);
+    return {
+      geo: bodyGeometry(),
+      mat: new MeshLambertMaterial({ map: tex.map }),
+      eyeGeo: new SphereGeometry(0.016, 10, 8),
+      eyeMat: new MeshLambertMaterial({ color: '#d8a826', emissive: '#3a2a00' }),
+      pupilGeo: new BoxGeometry(0.004, 0.022, 0.006),
+      dark: new MeshBasicMaterial({ color: '#0a0806' }),
+      tongueGeo,
+      tongueMat: new MeshBasicMaterial({ color: '#a51d2a' }),
+    };
+  }, []);
   return (
     <>
       {spots.map((s, i) => (
-        <Snake key={i} spot={s} world={world} geo={geo} mats={mats} />
+        <Snake key={i} spot={s} world={world} shared={shared} />
       ))}
     </>
   );

@@ -4,20 +4,57 @@
   padding: 0;
 }
 
+/* Design tokens: palette, glass surfaces, type scale, spacing, safe-area edges. */
+:root {
+  --green: #14221a;
+  --green-deep: #0c1610;
+  --orange: #f0a35e;
+  --orange-dark: #a8642c;
+  --cream: #f2ead8;
+  --cream-dim: rgba(242, 234, 216, 0.72);
+  --cream-faint: rgba(242, 234, 216, 0.18);
+  --sage: #9fb59a;
+  --red: #e5584f;
+  --coral: #e5866a;
+  --ink: #1b1408;
+  --glass: rgba(20, 34, 26, 0.72);
+  --glass-strong: rgba(20, 34, 26, 0.9);
+  --line: rgba(242, 234, 216, 0.2);
+  --shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+
+  --t-2xs: 0.625rem; /* 10px: ring values */
+  --t-xs: 0.6875rem; /* 11px: labels, kickers */
+  --t-sm: 0.8125rem; /* 13px: secondary copy */
+  --t-md: 0.9375rem; /* 15px: body, toasts */
+  --t-lg: 1.125rem; /* 18px */
+  --t-xl: 1.5rem; /* 24px */
+
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+
+  --safe-t: max(12px, env(safe-area-inset-top));
+  --safe-r: max(12px, env(safe-area-inset-right));
+  --safe-b: max(16px, env(safe-area-inset-bottom));
+  --safe-l: max(12px, env(safe-area-inset-left));
+}
+
 html,
 body,
 #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #14221a;
+  background: var(--green);
   overscroll-behavior: none;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  color: #f2ead8;
+  color: var(--cream);
+  -webkit-font-smoothing: antialiased;
 }
 
 .game {
@@ -28,6 +65,8 @@ body,
 .scene {
   position: absolute !important;
   inset: 0;
+  /* first paint before WebGL draws: deep green, never black */
+  background: var(--green);
 }
 
 .controls {
@@ -43,8 +82,9 @@ body,
   width: 112px;
   height: 112px;
   border-radius: 50%;
-  background: rgba(242, 234, 216, 0.12);
-  border: 2px solid rgba(242, 234, 216, 0.35);
+  background: rgba(20, 34, 26, 0.35);
+  border: 2px solid rgba(242, 234, 216, 0.4);
+  box-shadow: inset 0 0 0 6px rgba(242, 234, 216, 0.06);
   opacity: 0;
   transition: opacity 0.15s;
   pointer-events: none;
@@ -57,15 +97,18 @@ body,
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(242, 234, 216, 0.75);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  background: var(--cream);
+  border: 3px solid rgba(240, 163, 94, 0.85);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
+/* ---------- top-left: crash tag + clock ---------- */
 .hud-top {
   position: absolute;
-  top: max(12px, env(safe-area-inset-top));
-  left: 12px;
-  right: 12px;
+  top: var(--safe-t);
+  left: var(--safe-l);
+  /* the minimap (112px) + gear sit in the top-right corner */
+  right: calc(var(--safe-r) + 124px);
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -75,44 +118,61 @@ body,
 .hud-left {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
 }
 
 .crash-tag {
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #f0a35e;
-  font-weight: 700;
+  color: var(--orange);
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .clock {
-  font-size: 1rem;
-  font-weight: 800;
+  font-size: var(--t-lg);
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  min-height: 1.3em;
 }
 
-
+/* ---------- debug readout (settings > show FPS) ---------- */
 .stats {
   position: absolute;
-  left: 12px;
-  bottom: max(10px, env(safe-area-inset-bottom));
+  left: var(--safe-l);
+  right: var(--safe-r);
+  bottom: calc(var(--safe-b) - 6px);
+  width: max-content;
+  max-width: 52%;
   font: 11px/1.35 ui-monospace, Menlo, Consolas, monospace;
-  white-space: pre;
-  color: rgba(242, 234, 216, 0.85);
-  background: rgba(0, 0, 0, 0.35);
+  white-space: pre-wrap;
+  color: rgba(242, 234, 216, 0.9);
+  background: rgba(0, 0, 0, 0.5);
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   pointer-events: none;
+  z-index: 3;
 }
 
 .server {
   position: absolute;
-  right: 12px;
-  bottom: max(10px, env(safe-area-inset-bottom));
+  left: var(--safe-l);
+  bottom: calc(var(--safe-b) + 78px);
   font: 11px ui-monospace, Menlo, Consolas, monospace;
-  color: rgba(242, 234, 216, 0.6);
+  color: rgba(242, 234, 216, 0.7);
   pointer-events: none;
+  z-index: 3;
+}
+
+.debug.hidden {
+  display: none;
 }
 
 .hint {
@@ -147,20 +207,41 @@ body,
   gap: 6px;
 }
 
+/* generic pill button (skip, map close) */
 .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
   pointer-events: auto;
-  background: rgba(14, 20, 16, 0.55);
+  background: var(--glass);
   -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
-  color: #f2ead8;
-  border: 1px solid rgba(242, 234, 216, 0.22);
+  color: var(--cream);
+  border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 6px 11px;
-  font-size: 0.7rem;
-  font-weight: 700;
+  padding: 6px 12px;
+  font-size: var(--t-xs);
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   cursor: pointer;
+  transition: transform 0.08s, background 0.15s;
+}
+
+.chip:active {
+  transform: scale(0.95);
+  background: var(--glass-strong);
+}
+
+.chip svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .vignette {
@@ -169,31 +250,36 @@ body,
   pointer-events: none;
   background:
     radial-gradient(ellipse at 50% 55%, rgba(0, 0, 0, 0) 55%, rgba(8, 10, 6, 0.42) 100%),
-    linear-gradient(to bottom, rgba(10, 14, 10, 0.28), rgba(0, 0, 0, 0) 18%, rgba(0, 0, 0, 0) 82%, rgba(10, 14, 10, 0.3));
+    linear-gradient(to bottom, rgba(10, 14, 10, 0.32), rgba(0, 0, 0, 0) 18%, rgba(0, 0, 0, 0) 82%, rgba(10, 14, 10, 0.3));
 }
 
+/* ---------- stat rings ---------- */
 .rings {
   position: absolute;
-  top: calc(max(12px, env(safe-area-inset-top)) + 46px);
-  left: 10px;
+  top: calc(var(--safe-t) + 44px);
+  left: var(--safe-l);
   display: flex;
-  gap: 4px;
+  gap: 6px;
   pointer-events: none;
+  z-index: 4;
 }
 
 .ring {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 40px;
+}
+
+.ring svg {
   width: 40px;
   height: 40px;
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
 }
 
-.ring svg {
-  width: 100%;
-  height: 100%;
-}
-
 .ring-track {
-  fill: rgba(14, 20, 16, 0.55);
+  fill: rgba(20, 34, 26, 0.72);
   stroke: rgba(242, 234, 216, 0.16);
   stroke-width: 4;
 }
@@ -205,8 +291,36 @@ body,
   transition: stroke-dashoffset 0.15s linear;
 }
 
-.ring.low {
+.ring-icon {
+  fill: none;
+  stroke: var(--cream);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 0.2s;
+}
+
+.ring-val {
+  margin-top: 1px;
+  font-size: var(--t-2xs);
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--cream);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* below 25: tint icon + value with the ring colour and pulse */
+.ring.low svg {
   animation: ring-pulse 0.9s ease-in-out infinite;
+}
+
+.ring.low .ring-icon {
+  stroke: currentColor;
+}
+
+.ring.low .ring-val {
+  color: currentColor;
 }
 
 @keyframes ring-pulse {
@@ -215,16 +329,24 @@ body,
   }
 }
 
+.ring.drinking svg {
+  filter: drop-shadow(0 0 6px rgba(79, 168, 216, 0.9));
+}
+
+/* "Drinking" badge hangs under the thirst ring */
 .drink {
   position: absolute;
+  top: calc(100% + 3px);
   left: 50%;
-  bottom: 22%;
   transform: translateX(-50%);
-  padding: 6px 14px;
+  padding: 2px 7px;
   border-radius: 999px;
-  background: rgba(30, 80, 110, 0.6);
-  font-size: 0.85rem;
-  font-weight: 700;
+  background: #2b6f95;
+  color: var(--cream);
+  font-size: var(--t-2xs);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
   opacity: 0;
   transition: opacity 0.25s;
   pointer-events: none;
@@ -232,8 +354,4 @@ body,
 
 .drink.on {
   opacity: 1;
-}
-
-.debug.hidden {
-  display: none;
 }

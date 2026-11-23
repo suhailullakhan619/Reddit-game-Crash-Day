@@ -37,5 +37,22 @@
   },
   "dev": {
     "subreddit": "crash_day_dev"
+  },
+  "permissions": {
+    "redis": true,
+    "reddit": {
+      "asUser": [
+        "SUBMIT_COMMENT",
+        "SUBSCRIBE_TO_SUBREDDIT"
+      ]
+    }
+  },
+  "scheduler": {
+    "tasks": {
+      "daily-post": {
+        "endpoint": "/internal/scheduler/daily-post",
+        "cron": "5 0 * * *"
+      }
+    }
   }
 }

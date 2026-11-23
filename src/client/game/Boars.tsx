@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
   BufferAttribute,
@@ -14,7 +14,8 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { sfxHit, sfxSnort } from './audio';
-import { playerPos } from './shared';
+import { mergeStatic, playerPos } from './shared';
+import { hard } from './difficulty';
 import { addItem, combat, createCreature, creatureSlot, damage, emit, run, toast } from './state';
 import { mulberry32, WATER_LEVEL, WORLD_HALF, type World } from './world';
 
@@ -22,7 +23,7 @@ import { mulberry32, WATER_LEVEL, WORLD_HALF, type World } from './world';
 // charge (paws the ground: dodge window). Two spear hits bring one down for meat.
 
 const HERDS = 4;
-const VISIBLE = 65;
+const VISIBLE = 45;
 
 function bristleCoat(geo: BufferGeometry, seed: number) {
   const g = geo.index ? geo.toNonIndexed() : geo;
@@ -110,6 +111,8 @@ function Boar({ home, seed, world, geo, mats }: { home: Herd; seed: number; worl
   const body = useRef<Group>(null);
   const head = useRef<Group>(null);
   const legs = useRef<(Group | null)[]>([]);
+  // rigid parts per rig segment merge into fewer draws (17 -> ~9 per boar)
+  useLayoutEffect(() => (root.current ? mergeStatic(root.current) : undefined), [geo, mats]);
   const ai = useRef(
     (() => {
       const rng = mulberry32(seed);
@@ -171,7 +174,7 @@ function Boar({ home, seed, world, geo, mats }: { home: Herd; seed: number; worl
         }
         face = Math.atan2(a.target.x - a.x, a.target.z - a.z);
         targetSpeed = a.t % 4 < 2.5 ? 0.9 : 0; // amble, stop to root around
-        if (playing && dist < 11) {
+        if (playing && dist < 11 * hard.sense()) {
           setMode('alert');
           sfxSnort();
         }
@@ -188,7 +191,7 @@ function Boar({ home, seed, world, geo, mats }: { home: Herd; seed: number; worl
       }
       case 'windup': {
         face = Math.atan2(dx, dz);
-        if (a.t > 0.7) {
+        if (a.t > 0.7 * hard.windup()) {
           const len = dist || 1;
           a.dir.x = dx / len;
           a.dir.z = dz / len;
@@ -199,10 +202,10 @@ function Boar({ home, seed, world, geo, mats }: { home: Herd; seed: number; worl
       }
       case 'charge': {
         face = Math.atan2(a.dir.x, a.dir.z);
-        targetSpeed = 11;
+        targetSpeed = 11 * hard.speed();
         if (!a.hitDone && dist < 1.3 && combat.invuln <= 0 && playing) {
           a.hitDone = true;
-          damage(16, 'boar');
+          damage(16 * hard.dmg(), 'boar');
           combat.knockX = a.dir.x * 6;
           combat.knockZ = a.dir.z * 6;
         }

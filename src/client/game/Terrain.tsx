@@ -1,11 +1,88 @@
-import { useMemo } from 'react';
-import { BufferAttribute, Color, PlaneGeometry, ShaderMaterial, UniformsLib, UniformsUtils } from 'three';
+import { useMemo, useRef, type RefObject } from 'react';
+import {
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  Fog,
+  MeshLambertMaterial,
+  PlaneGeometry,
+  ShaderMaterial,
+  UniformsLib,
+  UniformsUtils,
+  type Mesh,
+} from 'three';
 import { useFrame } from '@react-three/fiber';
 import { atmo, fxTime } from './fx';
 import { PALETTE } from './shared';
+import { run } from './state';
 import { WATER_LEVEL, WORLD_HALF, type World } from './world';
 
-const SEGMENTS = 200;
+const SEGMENTS = 160;
+// The terrain is split into TILES x TILES sub-meshes (copied from the one full grid, so
+// normals and colors match across seams). Each tile frustum-culls on its own and tiles past
+// the fog are hidden, instead of drawing the whole 240 m map every frame.
+const TILES = 4;
+// water tiles are smaller; only tiles that actually hold water are built
+const WATER_TILES = 8;
+const FOG_FAR = 105;
+const AERIAL_DIST = 260;
+
+// Copy one rectangular block of grid vertices out of the full plane into its own geometry.
+function extractTile(full: BufferGeometry, tx: number, tz: number) {
+  const seg = SEGMENTS / TILES;
+  const row = SEGMENTS + 1;
+  const n = seg + 1;
+  const out = new BufferGeometry();
+  for (const name of ['position', 'normal', 'color']) {
+    const src = full.getAttribute(name);
+    if (!src) continue;
+    const size = src.itemSize;
+    const arr = new Float32Array(n * n * size);
+    for (let iy = 0; iy < n; iy++)
+      for (let ix = 0; ix < n; ix++) {
+        const si = (tz * seg + iy) * row + (tx * seg + ix);
+        const di = iy * n + ix;
+        for (let c = 0; c < size; c++) arr[di * size + c] = src.getComponent(si, c);
+      }
+    out.setAttribute(name, new BufferAttribute(arr, size));
+  }
+  // same winding as PlaneGeometry
+  const idx: number[] = [];
+  for (let iy = 0; iy < seg; iy++)
+    for (let ix = 0; ix < seg; ix++) {
+      const a = ix + n * iy;
+      const b = ix + n * (iy + 1);
+      const c = ix + 1 + n * (iy + 1);
+      const d = ix + 1 + n * iy;
+      idx.push(a, b, d, b, c, d);
+    }
+  out.setIndex(idx);
+  out.computeBoundingSphere();
+  return out;
+}
+
+type Tile = { geo: BufferGeometry; cx: number; cz: number; radius: number };
+
+function toTile(geo: BufferGeometry, cx: number, cz: number, radius: number): Tile {
+  const bs = geo.boundingSphere;
+  return bs ? { geo, cx: bs.center.x, cz: bs.center.z, radius: bs.radius } : { geo, cx, cz, radius };
+}
+
+// Hide tiles beyond the view distance (the aerial intro sees much further).
+function useDistanceHide(tiles: Tile[], refs: RefObject<(Mesh | null)[]>) {
+  useFrame(({ camera, scene }) => {
+    // the cinematic follows the live fog distance (it closes in during the dive)
+    const fog = scene.fog;
+    const limit = run.phase === 'intro' ? (fog instanceof Fog ? Math.max(FOG_FAR, fog.far + 10) : AERIAL_DIST) : FOG_FAR;
+    const px = camera.position.x;
+    const pz = camera.position.z;
+    for (let i = 0; i < tiles.length; i++) {
+      const t = tiles[i]!;
+      const m = refs.current[i];
+      if (m) m.visible = Math.hypot(t.cx - px, t.cz - pz) - t.radius < limit;
+    }
+  });
+}
 
 export function Terrain({ world }: { world: World }) {
   const geometry = useMemo(() => {
@@ -72,14 +149,27 @@ export function Terrain({ world }: { world: World }) {
       colors[i * 3 + 2] = c.b;
     }
     geo.setAttribute('color', new BufferAttribute(colors, 3));
-    return geo;
+
+    const tiles: Tile[] = [];
+    const size = (WORLD_HALF * 2) / TILES;
+    for (let tz = 0; tz < TILES; tz++)
+      for (let tx = 0; tx < TILES; tx++) {
+        const t = extractTile(geo, tx, tz);
+        tiles.push(toTile(t, -WORLD_HALF + (tx + 0.5) * size, -WORLD_HALF + (tz + 0.5) * size, size * 0.75));
+      }
+    geo.dispose();
+    return tiles;
   }, [world]);
+
+  const material = useMemo(() => new MeshLambertMaterial({ vertexColors: true }), []);
+  const refs = useRef<(Mesh | null)[]>([]);
+  useDistanceHide(geometry, refs);
 
   return (
     <>
-      <mesh geometry={geometry} receiveShadow>
-        <meshLambertMaterial vertexColors />
-      </mesh>
+      {geometry.map((t, i) => (
+        <mesh key={i} ref={(el) => void (refs.current[i] = el)} geometry={t.geo} material={material} receiveShadow />
+      ))}
       <Water world={world} />
     </>
   );
@@ -176,6 +266,29 @@ function Water({ world }: { world: World }) {
     [world]
   );
 
+  // one plane per WATER_TILES cell, built only where the terrain dips below the water line
+  const tiles = useMemo(() => {
+    const size = (WORLD_HALF * 2) / WATER_TILES;
+    const out: Tile[] = [];
+    for (let tz = 0; tz < WATER_TILES; tz++)
+      for (let tx = 0; tx < WATER_TILES; tx++) {
+        const x0 = -WORLD_HALF + tx * size;
+        const z0 = -WORLD_HALF + tz * size;
+        let wet = false;
+        for (let z = z0; z <= z0 + size && !wet; z += 1.5)
+          for (let x = x0; x <= x0 + size && !wet; x += 1.5) if (world.heightAt(x, z) < WATER_LEVEL + 0.05) wet = true;
+        if (!wet) continue;
+        const g = new PlaneGeometry(size, size);
+        g.rotateX(-Math.PI / 2);
+        g.translate(x0 + size / 2, WATER_LEVEL, z0 + size / 2);
+        g.computeBoundingSphere();
+        out.push(toTile(g, x0 + size / 2, z0 + size / 2, size * 0.75));
+      }
+    return out;
+  }, [world]);
+  const refs = useRef<(Mesh | null)[]>([]);
+  useDistanceHide(tiles, refs);
+
   useFrame(() => {
     const u = mat.uniforms;
     u.uTime!.value = fxTime.value;
@@ -186,8 +299,10 @@ function Water({ world }: { world: World }) {
   });
 
   return (
-    <mesh rotation-x={-Math.PI / 2} position-y={WATER_LEVEL} material={mat} renderOrder={1}>
-      <planeGeometry args={[WORLD_HALF * 2, WORLD_HALF * 2]} />
-    </mesh>
+    <>
+      {tiles.map((t, i) => (
+        <mesh key={i} ref={(el) => void (refs.current[i] = el)} geometry={t.geo} material={mat} renderOrder={1} />
+      ))}
+    </>
   );
 }

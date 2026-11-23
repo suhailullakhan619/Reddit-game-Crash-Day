@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import {
   AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
   CylinderGeometry,
-  MeshStandardMaterial,
+  Color,
+  MeshLambertMaterial,
   TorusGeometry,
   Vector3,
   type Group,
@@ -23,6 +24,7 @@ import {
   startWind,
 } from './audio';
 import { finishIntro, intro, setStage, stageAt, T } from './intro';
+import { mergeStatic } from './shared';
 import { run } from './state';
 import { airfoil, finShape, fuselageGeometry, propBlade, softDot } from './Wreck';
 import type { World } from './world';
@@ -67,18 +69,21 @@ function FlyingPlane({ seed, propRef }: { seed: number; propRef: RefObject<Group
   );
   const mats = useMemo(
     () => ({
-      hull: new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.15 }),
-      paint: new MeshStandardMaterial({ color: '#e9e6dd', roughness: 0.5, metalness: 0.15 }),
-      stripe: new MeshStandardMaterial({ color: '#c2452d', roughness: 0.5 }),
-      metal: new MeshStandardMaterial({ color: '#8d9297', roughness: 0.4, metalness: 0.7 }),
-      dark: new MeshStandardMaterial({ color: '#2f3236', roughness: 0.5, metalness: 0.5 }),
-      glass: new MeshStandardMaterial({ color: '#22343f', roughness: 0.05, metalness: 0.4 }),
-      rubber: new MeshStandardMaterial({ color: '#1c1b1a', roughness: 0.9 }),
+      hull: new MeshLambertMaterial({ vertexColors: true }),
+      paint: new MeshLambertMaterial({ color: '#e2dfd5' }),
+      stripe: new MeshLambertMaterial({ color: '#c2452d' }),
+      metal: new MeshLambertMaterial({ color: '#6c7175' }),
+      dark: new MeshLambertMaterial({ color: '#26292c' }),
+      glass: new MeshLambertMaterial({ color: '#1a2830' }),
+      rubber: new MeshLambertMaterial({ color: '#1c1b1a' }),
     }),
     []
   );
+  // airframe is rigid: merge everything except the spinning prop
+  const root = useRef<Group>(null);
+  useLayoutEffect(() => (root.current ? mergeStatic(root.current, { deep: true, exclude: [propRef.current] }) : undefined), [parts, mats, propRef]);
   return (
-    <group>
+    <group ref={root}>
       <mesh geometry={parts.fuselage} material={mats.hull} />
       <mesh position={[2.55, 0.62, 0]} rotation-z={-0.75} material={mats.glass}>
         <boxGeometry args={[0.9, 0.03, 1.15]} />
@@ -118,12 +123,16 @@ function FlyingPlane({ seed, propRef }: { seed: number; propRef: RefObject<Group
   );
 }
 
-export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }) {
+export function CrashIntro({ world, causes }: { world: World; causes: [CrashCause, CrashCause] }) {
+  // effects for a cause start when that emergency happens
+  const startOf = (c: CrashCause) => (causes[0] === c ? T.event : causes[1] === c ? T.event2 : Infinity);
+  const has = (c: CrashCause) => causes[0] === c || causes[1] === c;
   const camera = useThree((s) => s.camera);
   const plane = useRef<Group>(null);
   const prop = useRef<Group>(null);
   const smoke = useRef<Points<BufferGeometry, PointsMaterial>>(null);
   const feathers = useRef<Points<BufferGeometry, PointsMaterial>>(null);
+  const fire = useRef<Group>(null);
 
   const sim = useRef({
     theta: 0,
@@ -134,6 +143,8 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
     diveFrom: null as null | { p0: Vector3; p1: Vector3; p2: Vector3; p3: Vector3 },
     smokeHead: 0,
     flashed: false,
+    flashed2: false,
+    drop: 0,
     impacted: false,
     rung: false,
     thunderAt: 0,
@@ -152,6 +163,13 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
     geo.setAttribute('position', new BufferAttribute(new Float32Array(SMOKE * 3).fill(-9999), 3));
     return { geo, life: new Float32Array(SMOKE), tex: softDot() };
   }, []);
+
+  // black smoke for engine trouble/fire, white vapour for a fuel leak (set once, not per frame)
+  const [c1, c2] = causes;
+  const smokeColor = useMemo(() => {
+    const is = (c: CrashCause) => c1 === c || c2 === c;
+    return new Color(is('fire') || is('engine') ? '#2a2420' : is('fuel') ? '#c9cbc8' : '#4a4541');
+  }, [c1, c2]);
 
   const featherData = useMemo(() => {
     const geo = new BufferGeometry();
@@ -181,7 +199,8 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
     if (run.phase !== 'intro') return;
     const dt = Math.min(rawDt, 0.05);
     const s = sim.current;
-    intro.t += dt;
+    intro.frames++;
+    if (intro.started) intro.t += dt;
     const t = intro.t;
     const stage = stageAt(t);
     setStage(stage);
@@ -190,10 +209,8 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
     const simDt = stage === 'grab' ? dt * 0.3 : dt;
 
     // --- emergency kicks in ---------------------------------------------------
-    if (t >= T.event && !s.flashed) {
-      s.flashed = true;
-      audio.current.alarm = startAlarm();
-      if (cause === 'bird') {
+    const trigger = (c: CrashCause) => {
+      if (c === 'bird') {
         sfxThud();
         const pos = featherData.geo.attributes.position!;
         for (let i = 0; i < 40; i++) {
@@ -203,16 +220,28 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
           featherData.vel[i * 3 + 2] = (Math.random() - 0.5) * 8;
         }
       }
-      if (cause === 'storm') sfxThunder();
+      if (c === 'storm') sfxThunder();
+      if (c === 'fire' || c === 'engine') sfxThud();
+    };
+    if (t >= T.event && !s.flashed) {
+      s.flashed = true;
+      audio.current.alarm = startAlarm();
+      trigger(causes[0]);
     }
-    if (cause === 'storm' && t > s.thunderAt && t < T.impact) {
+    if (t >= T.event2 && !s.flashed2) {
+      s.flashed2 = true;
+      trigger(causes[1]);
+    }
+    if (has('storm') && t > s.thunderAt && t < T.impact && t > startOf('storm') - 4) {
       s.thunderAt = t + 2.2 + Math.random() * 2;
       if (t > 1) sfxThunder();
     }
 
     // engine health: bird/fuel sputter, engine failure dies, storm stays on
-    const engine =
-      t < T.event ? 1 : cause === 'engine' ? Math.max(0, 1 - (t - T.event) * 0.8) : cause === 'storm' ? 0.85 : 0.45 + Math.random() * 0.3;
+    let engine = t < T.event ? 1 : 0.85;
+    if (t > startOf('bird') || t > startOf('fuel')) engine = Math.min(engine, 0.45 + Math.random() * 0.3);
+    if (t > startOf('engine')) engine = Math.min(engine, Math.max(0, 1 - (t - startOf('engine')) * 0.8));
+    if (t > startOf('fire')) engine = Math.min(engine, Math.max(0.1, 0.6 - (t - startOf('fire')) * 0.25));
     audio.current.engine?.set?.(engine);
     audio.current.wind?.set?.(stage === 'dive' ? Math.min(1, (t - T.grabEnd) / 2.5) : 0.15);
     s.propSpeed += (engine * 45 - s.propSpeed) * Math.min(1, dt * 1.5);
@@ -223,9 +252,11 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
     const prevPos = tmpV.copy(s.pos);
     if (t < T.grabEnd) {
       const glide = t > T.event ? (t - T.event) * 1.2 : 0;
+      // wind shear: the plane suddenly drops
+      if (t > startOf('shear')) s.drop = Math.min(9, s.drop + simDt * 7);
       s.theta += (14 / CIRCLE_R) * simDt;
       const th = theta0 + s.theta;
-      s.pos.set(Math.cos(th) * CIRCLE_R, ALT + crash.y * 0.3 - glide, Math.sin(th) * CIRCLE_R);
+      s.pos.set(Math.cos(th) * CIRCLE_R, ALT + crash.y * 0.3 - glide - s.drop, Math.sin(th) * CIRCLE_R);
     } else {
       if (!s.diveFrom) {
         const p0 = s.pos.clone();
@@ -249,7 +280,8 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
       fwd.copy(s.vel).normalize();
       if (fwd.lengthSq() > 0.5) plane.current.lookAt(tmpV.copy(s.pos).add(fwd));
       // bank into the circle, wobble once the emergency starts
-      const wobble = t > T.event ? Math.sin(t * 9) * 0.06 + Math.sin(t * 3.3) * 0.08 : 0;
+      const shearing = t > startOf('shear') ? 2.5 : 1;
+      const wobble = t > T.event ? (Math.sin(t * 9) * 0.06 + Math.sin(t * 3.3) * 0.08) * shearing : 0;
       plane.current.rotateZ(t < T.grabEnd ? -0.32 + wobble : wobble * 2);
       plane.current.visible = t < T.impact;
     }
@@ -258,7 +290,7 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
     if (smoke.current) {
       const pos = smokeData.geo.attributes.position!;
       if (t > T.event && t < T.impact) {
-        const emit = Math.ceil(simDt * 40);
+        const emit = Math.ceil(simDt * (has('fire') || has('fuel') ? 60 : 40));
         for (let e = 0; e < emit; e++) {
           const i = s.smokeHead++ % SMOKE;
           // engine sits at the nose
@@ -270,12 +302,27 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
         if (smokeData.life[i]! <= 0) continue;
         smokeData.life[i] = smokeData.life[i]! - simDt * 0.5;
         pos.setY(i, pos.getY(i) + simDt * 1.2);
+        // puffs the chase camera flies through balloon into screen-filling dark blobs: drop them
+        const dx = pos.getX(i) - camera.position.x;
+        const dy = pos.getY(i) - camera.position.y;
+        const dz = pos.getZ(i) - camera.position.z;
+        if (dx * dx + dy * dy + dz * dz < 36) smokeData.life[i] = 0;
         if (smokeData.life[i]! <= 0) pos.setXYZ(i, -9999, -9999, -9999);
       }
       pos.needsUpdate = true;
-      smoke.current.material.color.set(cause === 'engine' ? '#2c2622' : '#4a4541');
+      // the grab camera sits right in the trail; big soft points there read as black blobs
+      smoke.current.visible = stage !== 'grab';
     }
-    if (feathers.current && cause === 'bird') {
+    if (fire.current) {
+      const on = t > startOf('fire') && t < T.impact;
+      fire.current.visible = on;
+      if (on) {
+        fire.current.position.copy(s.pos).addScaledVector(fwd, 3.2).addScaledVector(up, 0.4);
+        const f = 1 + Math.sin(t * 23) * 0.25 + Math.sin(t * 37) * 0.15;
+        fire.current.scale.set(f, f * 1.4, f);
+      }
+    }
+    if (feathers.current && has('bird')) {
       const pos = featherData.geo.attributes.position!;
       for (let i = 0; i < 40; i++) {
         featherData.vel[i * 3 + 1] = featherData.vel[i * 3 + 1]! - simDt * 6;
@@ -310,10 +357,10 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
 
     // --- camera --------------------------------------------------------------------
     side.crossVectors(fwd, up).normalize();
-    const shake = t > T.event ? (stage === 'dive' ? 0.35 : 0.12) : 0.02;
+    const shake = (t > T.event ? (stage === 'dive' ? 0.35 : 0.12) : 0.02) * (t > startOf('shear') && t < T.grab ? 3 : 1);
     if (stage === 'grab') {
-      // close on the cockpit side window
-      camera.position.copy(s.pos).addScaledVector(side, 4.2).addScaledVector(up, 1.1).addScaledVector(fwd, 0.4);
+      // close on the cockpit side window, far enough out to clear the high wing
+      camera.position.copy(s.pos).addScaledVector(side, 9).addScaledVector(up, 2.5).addScaledVector(fwd, -3);
       camera.lookAt(tmpV.copy(s.pos).addScaledVector(fwd, 1.4).addScaledVector(up, 0.4));
     } else if (stage === 'dive') {
       camera.position.copy(s.pos).addScaledVector(fwd, -10).addScaledVector(up, 3.2).addScaledVector(side, 2);
@@ -330,6 +377,9 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
 
   return (
     <>
+      {/* stands in for the wreck's fire light (unlit here): with the same light count as
+          gameplay, the shaders compiled in the intro and its warm-up are reused after wake */}
+      <pointLight intensity={0} distance={16} decay={1.6} />
       <group ref={plane}>
         {/* model's nose is +X; lookAt aims +Z, so turn it */}
         <group rotation-y={-Math.PI / 2}>
@@ -337,9 +387,20 @@ export function CrashIntro({ world, cause }: { world: World; cause: CrashCause }
         </group>
       </group>
       <points ref={smoke} geometry={smokeData.geo} frustumCulled={false}>
-        <pointsMaterial map={smokeData.tex} color="#4a4541" size={3.2} transparent opacity={0.55} depthWrite={false} />
+        <pointsMaterial map={smokeData.tex} color={smokeColor} size={3.2} transparent opacity={0.55} depthWrite={false} />
       </points>
-      {cause === 'bird' && (
+      {/* engine fire trailing from the cowling */}
+      <group ref={fire} visible={false}>
+        <mesh>
+          <coneGeometry args={[0.45, 1.6, 7]} />
+          <meshBasicMaterial color="#ff7a1a" transparent opacity={0.85} blending={AdditiveBlending} depthWrite={false} fog={false} />
+        </mesh>
+        <mesh scale={0.55} position-y={-0.15}>
+          <coneGeometry args={[0.45, 1.6, 7]} />
+          <meshBasicMaterial color="#ffd36b" transparent opacity={0.9} blending={AdditiveBlending} depthWrite={false} fog={false} />
+        </mesh>
+      </group>
+      {has('bird') && (
         <points ref={feathers} geometry={featherData.geo} frustumCulled={false}>
           <pointsMaterial map={smokeData.tex} color="#f4f1ea" size={0.35} transparent depthWrite={false} blending={AdditiveBlending} />
         </points>

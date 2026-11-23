@@ -242,7 +242,7 @@ export function Vegetation({ world, shadows, density }: { world: World; shadows:
 
   const grassSpots = useMemo(() => {
     const rng = mulberry32(world.seed ^ 0x9e3779b9);
-    const target = Math.round(18000 * density);
+    const target = Math.round(14000 * density);
     const out: { x: number; z: number; y: number; s: number; r: number; h: number }[] = [];
     for (let i = 0; i < target * 4 && out.length < target; i++) {
       const x = (rng() * 2 - 1) * (WORLD_HALF - 8);
@@ -346,10 +346,10 @@ export function Vegetation({ world, shadows, density }: { world: World; shadows:
       <Chunked geometry={geos.crown} material={mats.crown} items={inst.crowns} castShadow={shadows} />
       <Chunked geometry={geos.palmTrunk} material={mats.palmTrunk} items={inst.palmTrunks} castShadow={shadows} />
       <Chunked geometry={geos.palm} material={mats.palm} items={inst.palms} castShadow={shadows} />
-      <Chunked geometry={geos.bush} material={mats.bush} items={inst.bushes} maxDist={80} />
-      <Chunked geometry={geos.fern} material={mats.fern} items={inst.ferns} maxDist={70} />
+      <Chunked geometry={geos.bush} material={mats.bush} items={inst.bushes} maxDist={70} />
+      <Chunked geometry={geos.fern} material={mats.fern} items={inst.ferns} maxDist={55} />
       <Chunked geometry={geos.rock} material={mats.rock} items={inst.rocks} castShadow={shadows} receiveShadow={shadows} maxDist={90} />
-      <Chunked geometry={geos.grass} material={mats.grass} items={inst.grass} maxDist={55} />
+      <Chunked geometry={geos.grass} material={mats.grass} items={inst.grass} maxDist={38} />
     </>
   );
 }

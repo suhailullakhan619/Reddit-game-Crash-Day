@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
   AdditiveBlending,
@@ -11,7 +11,6 @@ import {
   ExtrudeGeometry,
   LatheGeometry,
   MeshLambertMaterial,
-  MeshStandardMaterial,
   Shape,
   SRGBColorSpace,
   TorusGeometry,
@@ -20,6 +19,7 @@ import {
   type PointLight,
   type Points,
 } from 'three';
+import { mergeStatic, playerPos } from './shared';
 import { mulberry32, type World } from './world';
 
 // A crashed single-engine high-wing bush plane (generic, unbranded).
@@ -166,7 +166,11 @@ export function Wreck({ world, shadows }: { world: World; shadows: boolean }) {
   const fire = useRef<Group>(null);
   const fireLight = useRef<PointLight>(null);
   const smoke = useRef<Points>(null);
+  const root = useRef<Group>(null);
   const cs = shadows;
+
+  // the airframe and debris never move: merge them per material (about 36 draws down to ~10)
+  useLayoutEffect(() => (root.current ? mergeStatic(root.current, { deep: true, exclude: [fire.current] }) : undefined), [x, y, z, yaw, cs]);
 
   const parts = useMemo(() => {
     const fuselage = fuselageGeometry(world.seed);
@@ -198,15 +202,13 @@ export function Wreck({ world, shadows }: { world: World; shadows: boolean }) {
 
   const mats = useMemo(
     () => ({
-      hull: new MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.15 }),
-      paint: new MeshStandardMaterial({ color: '#e9e6dd', roughness: 0.5, metalness: 0.15 }),
-      stripe: new MeshStandardMaterial({ color: '#c2452d', roughness: 0.5, metalness: 0.1 }),
-      metal: new MeshStandardMaterial({ color: '#8d9297', roughness: 0.4, metalness: 0.7 }),
-      darkMetal: new MeshStandardMaterial({ color: '#3a3d40', roughness: 0.5, metalness: 0.6 }),
-      glass: new MeshStandardMaterial({
+      hull: new MeshLambertMaterial({ vertexColors: true }),
+      paint: new MeshLambertMaterial({ color: '#e2dfd5' }),
+      stripe: new MeshLambertMaterial({ color: '#c2452d' }),
+      metal: new MeshLambertMaterial({ color: '#6c7175' }),
+      darkMetal: new MeshLambertMaterial({ color: '#2e3134' }),
+      glass: new MeshLambertMaterial({
         color: '#1b2a33',
-        roughness: 0.08,
-        metalness: 0.3,
         transparent: true,
         opacity: 0.88,
       }),
@@ -236,7 +238,12 @@ export function Wreck({ world, shadows }: { world: World; shadows: boolean }) {
         m.rotation.y = t * (1 + i * 0.4);
       });
     }
-    if (fireLight.current) fireLight.current.intensity = 16 + Math.sin(t * 13) * 4 + Math.sin(t * 29) * 2;
+    if (fireLight.current) {
+      // fade by intensity, never by `visible`: changing the number of lights in the scene
+      // makes three.js recompile every lit material (a 70-400 ms hitch each time)
+      const near = Math.hypot(playerPos.x - x, playerPos.z - z) < 35;
+      fireLight.current.intensity = near ? 16 + Math.sin(t * 13) * 4 + Math.sin(t * 29) * 2 : 0;
+    }
     if (smoke.current) {
       const pos = smokeData.geo.attributes.position!;
       for (let i = 0; i < SMOKE_COUNT; i++) {
@@ -251,7 +258,7 @@ export function Wreck({ world, shadows }: { world: World; shadows: boolean }) {
   });
 
   return (
-    <group position={[x, y, z]} rotation-y={yaw}>
+    <group ref={root} position={[x, y, z]} rotation-y={yaw}>
       {/* the airframe: nose dug in, rolled onto the broken right wing */}
       <group position={[0, 0.78, 0]} rotation={[-0.14, 0, -0.07]}>
         <mesh geometry={parts.fuselage} material={mats.hull} castShadow={cs} receiveShadow={cs} />

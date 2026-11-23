@@ -170,7 +170,7 @@ export function Minimap({ world, pickups }: { world: World; pickups: Pickup[] })
       for (const f of run.campfires) {
         g.beginPath();
         g.arc(f.x, f.z, 1.3, 0, Math.PI * 2);
-        g.fillStyle = '#ffb347';
+        g.fillStyle = f.out ? '#7d7a70' : '#ffb347';
         g.fill();
       }
       for (const p of pickups) {
@@ -208,7 +208,7 @@ export function Minimap({ world, pickups }: { world: World; pickups: Pickup[] })
         const [x, y] = toCanvas(f.x, f.z, W);
         g.beginPath();
         g.arc(x!, y!, 5 * s, 0, Math.PI * 2);
-        g.fillStyle = '#ffb347';
+        g.fillStyle = f.out ? '#7d7a70' : '#ffb347';
         g.fill();
       }
       for (const p of pickups) {
@@ -220,10 +220,17 @@ export function Minimap({ world, pickups }: { world: World; pickups: Pickup[] })
       drawPlayer(g, px!, py!, Math.PI - combat.facing, s * 1.5);
     };
 
+    // skip canvas work when nothing moved (forced refresh every ~1.2 s for pickups/campfires)
+    let last = '';
+    let idle = 0;
     const tick = () => {
       if (!alive) return;
+      const key = `${playerPos.x.toFixed(1)},${playerPos.z.toFixed(1)},${combat.camYaw.toFixed(2)},${combat.facing.toFixed(2)}`;
+      if (key === last && ++idle < 10) return;
+      last = key;
+      idle = 0;
       drawSmall();
-      drawBig();
+      if (open) drawBig();
     };
     tick();
     const id = window.setInterval(tick, 120);

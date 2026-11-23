@@ -1,4 +1,3 @@
-import type { CrashCause } from '../../shared/daily';
 import type { ItemKind } from './state';
 import { mulberry32, WATER_LEVEL, WORLD_HALF, type World } from './world';
 
@@ -7,7 +6,7 @@ export type Pickup = { id: number; kind: ItemKind; x: number; y: number; z: numb
 export const PICKUP_RADIUS = 1.9;
 
 // Seeded loot layout: the same for every player today.
-export function createPickups(world: World, cause: CrashCause): Pickup[] {
+export function createPickups(world: World, generous: boolean): Pickup[] {
   const rng = mulberry32(world.seed ^ 0x5bd1e995);
   const out: Pickup[] = [];
   const add = (kind: ItemKind, x: number, z: number, amount = 1) => {
@@ -50,7 +49,6 @@ export function createPickups(world: World, cause: CrashCause): Pickup[] {
     }
   };
 
-  const generous = cause === 'bird';
   ring('water', generous ? 3 : 2, 5, 9);
   ring('medkit', 1, 6, 10);
   ring('wood', 2, 6, 11, 2); // broken crates = planks

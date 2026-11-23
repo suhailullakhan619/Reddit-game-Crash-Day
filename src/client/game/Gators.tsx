@@ -1,112 +1,200 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
-  BoxGeometry,
-  BufferAttribute,
+  Bone,
+  BufferGeometry,
+  CanvasTexture,
   CapsuleGeometry,
-  Color,
   ConeGeometry,
+  Float32BufferAttribute,
+  Group,
+  Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
+  Sphere,
+  RepeatWrapping,
+  Skeleton,
+  SkinnedMesh,
   SphereGeometry,
-  type BufferGeometry,
-  type Group,
+  SRGBColorSpace,
+  Uint16BufferAttribute,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { sfxGrowl, sfxHit, sfxSnap, sfxSplash } from './audio';
 import { playerPos } from './shared';
+import { hard } from './difficulty';
 import { combat, createCreature, creatureSlot, damage, emit, run, toast } from './state';
 import { mulberry32, WATER_LEVEL, WORLD_HALF, type World } from './world';
 
-// Alligators lurk in deep water, only eyes and back ridges above the surface.
-// Wade or swim near one and it hunts you; drink at the bank and it may lunge from the water.
-// Jaws open before a bite (dodge window). They never leave the water.
+// Alligators: one skinned mesh per animal (tail, body, neck and skull on a 10-bone spine)
+// with a procedural scute texture + bump map and a wet PBR finish. They lurk with only
+// eyes and back ridges above the surface, swim with an S-wave down the spine, and open
+// their jaws before a bite (dodge window). They never leave the water.
 
 const COUNT = 7;
-const VISIBLE = 70;
+const VISIBLE = 40;
+const LENGTH = 3.1; // tail tip (z=0) to snout (z=LENGTH)
+const BONES = 10;
+const HEAD_START = 0.8;
+const SEG = (LENGTH * HEAD_START) / (BONES - 1);
+const RINGS = 96;
+const RADIAL = 16;
 
-function hide(geo: BufferGeometry, seed: number) {
-  const g = geo.index ? geo.toNonIndexed() : geo;
-  for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
-  const p = g.attributes.position!;
-  const cols = new Float32Array(p.count * 3);
-  const rng = mulberry32(seed);
-  const back = new Color('#3c4227');
-  const mid = new Color('#545a32');
-  const belly = new Color('#bdb48a');
-  const c = new Color();
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i);
-    c.copy(y > 0.02 ? back : y > -0.06 ? mid : belly);
-    c.multiplyScalar(0.85 + rng() * 0.25);
-    cols[i * 3] = c.r;
-    cols[i * 3 + 1] = c.g;
-    cols[i * 3 + 2] = c.b;
+// width / height of the cross-section along the body (u: 0 tail tip .. 1 snout)
+function profile(u: number) {
+  if (u < 0.5) {
+    const k = u / 0.5;
+    // tail: flattened side to side, taller than wide near the tip
+    return { w: 0.035 + k * 0.24, h: 0.07 + k * 0.14 };
   }
-  g.setAttribute('color', new BufferAttribute(cols, 3));
-  return g;
+  if (u < 0.76) {
+    const k = (u - 0.5) / 0.26;
+    return { w: 0.27 + Math.sin(k * Math.PI) * 0.07, h: 0.21 + Math.sin(k * Math.PI) * 0.02 };
+  }
+  if (u < HEAD_START + 0.02) return { w: 0.23, h: 0.17 };
+  // skull widens at the jaw hinge, then a long flat tapering snout
+  const k = (u - HEAD_START - 0.02) / (1 - HEAD_START - 0.02);
+  const w = k < 0.2 ? 0.23 - k * 0.1 : 0.21 - (k - 0.2) * 0.17;
+  const h = 0.15 - k * 0.09;
+  return { w: Math.max(0.05, w), h: Math.max(0.045, h) };
 }
 
-function gatorGeos() {
-  // flattened torso with rows of armoured scutes; built along +Z
-  const torso = new CapsuleGeometry(0.32, 1.1, 6, 12);
-  torso.rotateX(Math.PI / 2);
-  torso.scale(1.05, 0.55, 1);
-  const parts: BufferGeometry[] = [hide(torso, 1)];
-  for (let row = -1; row <= 1; row++) {
-    for (let i = 0; i < 9; i++) {
-      const s = new ConeGeometry(0.05, 0.08, 4);
-      s.translate(row * 0.12, 0.17 - Math.abs(row) * 0.02, 0.6 - i * 0.15);
-      parts.push(hide(s, 20 + row * 10 + i));
+function bodyGeometry() {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const skinI: number[] = [];
+  const skinW: number[] = [];
+  for (let r = 0; r <= RINGS; r++) {
+    const u = r / RINGS;
+    const z = u * LENGTH;
+    const { w, h } = profile(u);
+    for (let a = 0; a <= RADIAL; a++) {
+      const ang = (a / RADIAL) * Math.PI * 2;
+      const s = Math.sin(ang);
+      const c = Math.cos(ang);
+      let x = c * w;
+      let y = s * h * (s < 0 ? 0.55 : 1);
+      // rows of armoured scutes (osteoderms) along the back and a double crest on the tail
+      if (s > 0.35 && u < 0.8) {
+        const rows = Math.abs(c) < 0.18 || (Math.abs(c) > 0.32 && Math.abs(c) < 0.55);
+        const bumps = Math.pow(Math.max(0, Math.sin(z * 22)), 2);
+        if (rows) y += h * 0.22 * bumps * (u < 0.5 ? 1.4 : 1);
+      }
+      // bulging eye sockets and nostril on the head
+      if (u > 0.84 && u < 0.89 && s > 0.6 && Math.abs(c) > 0.25 && Math.abs(c) < 0.6) y += 0.035;
+      if (u > 0.985 && s > 0.7) y += 0.015;
+      // slight belly sag behind the front legs
+      if (s < 0 && u > 0.5 && u < 0.76) y -= 0.03;
+      x *= 1;
+      pos.push(x, y, z);
+      uv.push(a / RADIAL, u * 10);
+      const f = Math.min(BONES - 1, z / SEG);
+      const i0 = Math.min(BONES - 1, Math.floor(f));
+      const i1 = Math.min(BONES - 1, i0 + 1);
+      const t = f - i0;
+      skinI.push(i0, i1, 0, 0);
+      skinW.push(1 - t, t, 0, 0);
     }
   }
-  const body = mergeGeometries(parts)!;
-  body.computeVertexNormals();
+  for (let r = 0; r < RINGS; r++) {
+    for (let a = 0; a < RADIAL; a++) {
+      const p0 = r * (RADIAL + 1) + a;
+      const p1 = p0 + RADIAL + 1;
+      idx.push(p0, p1, p0 + 1, p0 + 1, p1, p1 + 1);
+    }
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+  geo.setAttribute('skinIndex', new Uint16BufferAttribute(skinI, 4));
+  geo.setAttribute('skinWeight', new Float32BufferAttribute(skinW, 4));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
 
-  // long tapered snout + upper jaw
-  const skull = new SphereGeometry(0.2, 10, 8);
-  skull.scale(1.05, 0.55, 1);
-  const snout = new BoxGeometry(0.22, 0.09, 0.62);
-  snout.translate(0, -0.01, 0.38);
-  const brow = new SphereGeometry(0.06, 6, 5);
-  brow.translate(0.08, 0.08, 0.06);
-  const brow2 = brow.clone();
-  brow2.translate(-0.16, 0, 0);
-  const nostril = new SphereGeometry(0.03, 5, 4);
-  nostril.translate(0, 0.04, 0.66);
-  const upper = mergeGeometries([hide(skull, 2), hide(snout, 3), hide(brow, 4), hide(brow2, 5), hide(nostril, 6)])!;
-  upper.computeVertexNormals();
-  const jaw = new BoxGeometry(0.2, 0.05, 0.6);
-  jaw.translate(0, 0, 0.3);
-  const lower = hide(jaw, 7);
-  lower.computeVertexNormals();
-  // teeth along both jaws
-  const teethParts: BufferGeometry[] = [];
-  for (let i = 0; i < 8; i++) {
-    for (const side of [-1, 1]) {
-      const t = new ConeGeometry(0.012, 0.04, 3);
-      t.rotateX(Math.PI);
-      t.translate(side * 0.1, -0.06, 0.12 + i * 0.07);
-      teethParts.push(t);
+function hideTextures() {
+  const W = 128;
+  const H = 512;
+  const col = document.createElement('canvas');
+  col.width = W;
+  col.height = H;
+  const g = col.getContext('2d')!;
+  const rng = mulberry32(31);
+  // u=0.25 is the spine, u=0.75 the belly
+  const grad = g.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, '#4d5330');
+  grad.addColorStop(0.25, '#2f3420');
+  grad.addColorStop(0.45, '#4f5532');
+  grad.addColorStop(0.62, '#a39a6c');
+  grad.addColorStop(0.75, '#cdc39a');
+  grad.addColorStop(0.88, '#a39a6c');
+  grad.addColorStop(1, '#4d5330');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+  // mottled dark bands across the back
+  for (let y = 0; y < H; y += 40) {
+    g.fillStyle = `rgba(20, 22, 12, ${0.35 + rng() * 0.25})`;
+    g.fillRect(0, y + rng() * 8, W * 0.5, 14 + rng() * 8);
+  }
+  // scale plates: grid on back + flanks, larger rectangles on the belly
+  const bump = document.createElement('canvas');
+  bump.width = W;
+  bump.height = H;
+  const b = bump.getContext('2d')!;
+  b.fillStyle = '#303030';
+  b.fillRect(0, 0, W, H);
+  for (let y = 0; y < H; y += 12) {
+    for (let x = 0; x < W; x += 10) {
+      const belly = x > W * 0.6 && x < W * 0.9;
+      const shade = 150 + Math.floor(rng() * 70);
+      b.fillStyle = `rgb(${shade},${shade},${shade})`;
+      b.fillRect(x + 1, y + 1, belly ? 9 : 8, belly ? 11 : 10);
+      g.strokeStyle = 'rgba(15, 16, 9, 0.35)';
+      g.strokeRect(x + 0.5, y + 0.5, 10, 12);
     }
   }
-  const teeth = mergeGeometries(teethParts.map((t) => {
-    for (const k of Object.keys(t.attributes)) if (k !== 'position' && k !== 'normal') t.deleteAttribute(k);
+  const map = new CanvasTexture(col);
+  map.colorSpace = SRGBColorSpace;
+  map.wrapS = map.wrapT = RepeatWrapping;
+  const bumpMap = new CanvasTexture(bump);
+  bumpMap.wrapS = bumpMap.wrapT = RepeatWrapping;
+  return { map, bumpMap };
+}
+
+function partGeos() {
+  // lower jaw: long flat wedge hinged at the back of the skull
+  const jaw = new CapsuleGeometry(0.07, 0.48, 4, 10);
+  jaw.rotateX(Math.PI / 2);
+  jaw.scale(1.35, 0.42, 1);
+  jaw.translate(0, 0, 0.3);
+  const teeth: BufferGeometry[] = [];
+  for (let i = 0; i < 9; i++) {
+    for (const side of [-1, 1]) {
+      const t = new ConeGeometry(0.011, 0.045, 4);
+      t.rotateX(Math.PI);
+      t.translate(side * (0.085 - i * 0.004), -0.05, 0.06 + i * 0.058);
+      teeth.push(t);
+    }
+  }
+  const teethG = mergeGeometries(teeth.map((t) => {
+    t.deleteAttribute('uv');
     return t;
   }))!;
-
-  const tailSeg = new CapsuleGeometry(0.2, 0.5, 4, 8);
-  tailSeg.rotateX(Math.PI / 2);
-  tailSeg.scale(0.9, 0.55, 1);
-  tailSeg.translate(0, 0, -0.35);
-  const tail = hide(tailSeg, 8);
-  tail.computeVertexNormals();
-  const leg = new CapsuleGeometry(0.06, 0.2, 3, 6);
-  leg.rotateZ(Math.PI / 2);
-  leg.translate(0.16, -0.06, 0);
-  const legG = hide(leg, 9);
-  legG.computeVertexNormals();
-  return { body, upper, lower, teeth, tail, legG };
+  // sprawled legs: upper limb + webbed foot
+  const thigh = new CapsuleGeometry(0.055, 0.2, 4, 8);
+  thigh.rotateZ(Math.PI / 2 - 0.3);
+  thigh.translate(0.13, -0.04, 0);
+  const shin = new CapsuleGeometry(0.045, 0.16, 4, 8);
+  shin.translate(0.26, -0.13, 0.02);
+  const foot = new SphereGeometry(0.07, 8, 6);
+  foot.scale(1.1, 0.3, 1.3);
+  foot.translate(0.29, -0.22, 0.06);
+  const leg = mergeGeometries([thigh, shin, foot])!;
+  leg.computeVertexNormals();
+  return { jaw, teethG, leg, eye: new SphereGeometry(0.032, 12, 10), pupil: new SphereGeometry(0.012, 6, 5) };
 }
 
 type Spot = { x: number; z: number };
@@ -127,12 +215,9 @@ function placeGators(world: World): Spot[] {
 
 type Mode = 'lurk' | 'hunt' | 'windup' | 'snap' | 'retreat' | 'dead';
 
-function Gator({ home, seed, world, geo, mats }: { home: Spot; seed: number; world: World; geo: ReturnType<typeof gatorGeos>; mats: GatorMats }) {
+function Gator({ home, seed, world, shared }: { home: Spot; seed: number; world: World; shared: Shared }) {
   const root = useRef<Group>(null);
-  const jaw = useRef<Group>(null);
-  const tail = useRef<Group>(null);
-  const tail2 = useRef<Group>(null);
-  const legs = useRef<(Group | null)[]>([]);
+  const rig = useMemo(() => makeRig(shared), [shared]);
   const ai = useRef({
     rng: mulberry32(seed),
     x: home.x,
@@ -207,7 +292,7 @@ function Gator({ home, seed, world, geo, mats }: { home: Spot; seed: number; wor
         face = Math.atan2(a.target.x - a.x, a.target.z - a.z);
         targetSpeed = 0.7;
         // hunts swimmers, and ambushes anyone at the water's edge
-        if (playing && ((playerWet && dist < 15) || dist < 4.5)) {
+        if (playing && ((playerWet && dist < 15 * hard.sense()) || dist < 4.5)) {
           setMode('hunt');
           sfxSplash();
         }
@@ -215,7 +300,7 @@ function Gator({ home, seed, world, geo, mats }: { home: Spot; seed: number; wor
       }
       case 'hunt': {
         face = Math.atan2(dx, dz);
-        targetSpeed = 4.4;
+        targetSpeed = 4.4 * hard.speed();
         if (dist < 2.1) {
           setMode('windup');
           sfxGrowl(0.8);
@@ -225,7 +310,7 @@ function Gator({ home, seed, world, geo, mats }: { home: Spot; seed: number; wor
       case 'windup': {
         face = Math.atan2(dx, dz);
         targetSpeed = 0;
-        if (a.t > 0.5) {
+        if (a.t > 0.5 * hard.windup()) {
           setMode('snap');
           a.bit = false;
         }
@@ -236,7 +321,7 @@ function Gator({ home, seed, world, geo, mats }: { home: Spot; seed: number; wor
           a.bit = true;
           sfxSnap();
           if (dist < 2.5 && combat.invuln <= 0 && playing) {
-            damage(20, 'gator');
+            damage(20 * hard.dmg(), 'gator');
             // drag toward the water
             combat.knockX = -dx / (dist || 1) * 4;
             combat.knockZ = -dz / (dist || 1) * 4;
@@ -273,84 +358,127 @@ function Gator({ home, seed, world, geo, mats }: { home: Spot; seed: number; wor
     me.windup = a.mode === 'windup';
     me.danger = a.mode === 'windup' || a.mode === 'snap' ? 1 : a.mode === 'hunt' ? 0.75 : a.mode === 'lurk' && playerWet && dist < 20 ? 0.3 : 0;
 
-    // surfaced when attacking, only eyes above water while lurking
+    // surfaced when attacking, only eyes and ridges above water while lurking
     const subTarget = a.mode === 'lurk' || a.mode === 'retreat' ? 0.75 : a.mode === 'dead' ? 1.6 : -0.4;
     a.sub += (subTarget - a.sub) * Math.min(1, dt * 3);
     a.swim += dt * (1.5 + a.speed * 1.6);
     const t = state.clock.elapsedTime;
-    g.position.set(a.x, WATER_LEVEL - 0.05 - a.sub * 0.16 + Math.sin(t * 0.8 + seed) * 0.015, a.z);
+    g.position.set(a.x, WATER_LEVEL + 0.08 - a.sub * 0.2 + Math.sin(t * 0.8 + seed) * 0.015, a.z);
     g.rotation.y = a.heading;
     g.rotation.z = a.mode === 'dead' ? Math.min(Math.PI, g.rotation.z + dt * 3) : 0;
-    if (jaw.current) {
-      const open = a.mode === 'windup' ? 0.7 : a.mode === 'snap' ? Math.max(0, 0.7 - a.t * 6) : a.mode === 'hunt' ? 0.08 : 0;
-      jaw.current.rotation.x += (open - jaw.current.rotation.x) * Math.min(1, dt * 18);
-    }
-    const wag = Math.sin(a.swim) * (0.25 + Math.min(0.35, a.speed * 0.06));
-    if (tail.current) tail.current.rotation.y = wag;
-    if (tail2.current) tail2.current.rotation.y = wag * 1.4;
-    legs.current.forEach((leg, i) => {
-      if (!leg) return;
-      // tuck legs while swimming fast
-      leg.rotation.y = (i % 2 ? -1 : 1) * (a.speed > 2 ? 0.9 : 0.3 + Math.sin(a.swim + i) * 0.2);
+
+    // S-wave down the spine: strongest at the tail, head stays steady
+    const amp = 0.12 + Math.min(0.22, a.speed * 0.05);
+    rig.bones.forEach((b, i) => {
+      if (i === BONES - 1) {
+        const open = a.mode === 'windup' ? -0.12 : 0;
+        b.rotation.set(open, -Math.sin(a.swim - i * 0.55) * amp * 0.15, 0);
+        return;
+      }
+      const k = 1 - i / (BONES - 1);
+      b.rotation.set(0, Math.sin(a.swim - i * 0.55) * amp * (0.35 + k * 1.1), 0);
+    });
+    const open = a.mode === 'windup' ? 0.75 : a.mode === 'snap' ? Math.max(0, 0.75 - a.t * 6) : a.mode === 'hunt' ? 0.08 : 0;
+    rig.jaw.rotation.x += (open - rig.jaw.rotation.x) * Math.min(1, dt * 18);
+    rig.legs.forEach((leg, i) => {
+      // tuck legs against the body while swimming fast, paddle slowly otherwise
+      const side = i % 2 ? -1 : 1;
+      leg.rotation.y = side * (a.speed > 2 ? -0.9 : -0.2 + Math.sin(a.swim + i) * 0.3);
     });
   });
 
-  const legPos: [number, number, number, number][] = [
-    [0.22, 0, 0.45, 1],
-    [-0.22, 0, 0.45, -1],
-    [0.22, 0, -0.45, 1],
-    [-0.22, 0, -0.45, -1],
-  ];
-
   return (
     <group ref={root} visible={false}>
-      <mesh geometry={geo.body} material={mats.hide} />
-      {legPos.map(([x, y, z, side], i) => (
-        <group key={i} ref={(el) => void (legs.current[i] = el)} position={[x, y, z]} scale={[side, 1, 1]}>
-          <mesh geometry={geo.legG} material={mats.hide} />
-        </group>
-      ))}
-      <group position={[0, 0.02, 0.85]}>
-        <mesh geometry={geo.upper} material={mats.hide} />
-        <mesh geometry={geo.teeth} material={mats.teeth} />
-        <mesh position={[0.08, 0.12, 0.07]} material={mats.eye}>
-          <sphereGeometry args={[0.028, 6, 5]} />
-        </mesh>
-        <mesh position={[-0.08, 0.12, 0.07]} material={mats.eye}>
-          <sphereGeometry args={[0.028, 6, 5]} />
-        </mesh>
-        <group ref={jaw} position={[0, -0.07, 0.05]}>
-          <mesh geometry={geo.lower} material={mats.hide} />
-        </group>
-      </group>
-      <group ref={tail} position={[0, -0.01, -0.85]}>
-        <mesh geometry={geo.tail} material={mats.hide} />
-        <group ref={tail2} position={[0, 0, -0.65]} scale={[0.7, 0.75, 1]}>
-          <mesh geometry={geo.tail} material={mats.hide} />
-        </group>
+      {/* origin sits mid-body so bite distances measure from the shoulders */}
+      <group position={[0, 0, -LENGTH * 0.62]}>
+        <primitive object={rig.mesh} />
       </group>
     </group>
   );
 }
 
-function gatorMats() {
-  return {
-    hide: new MeshLambertMaterial({ vertexColors: true }),
-    teeth: new MeshLambertMaterial({ color: '#ece4cc' }),
-    eye: new MeshBasicMaterial({ color: '#c8b23a' }),
-  };
+function makeRig(shared: Shared) {
+  const bones: Bone[] = [];
+  for (let i = 0; i < BONES; i++) {
+    const b = new Bone();
+    b.position.set(0, 0, i === 0 ? 0 : SEG);
+    if (i > 0) bones[i - 1]!.add(b);
+    bones.push(b);
+  }
+  const mesh = new SkinnedMesh(shared.body, shared.hide);
+  mesh.add(bones[0]!);
+  mesh.updateMatrixWorld(true); // bones need world matrices before bind() computes inverses
+  mesh.bind(new Skeleton(bones));
+  // fixed generous bounds around the rig so animals off-screen skip skinning + draw
+  mesh.boundingSphere = new Sphere(shared.body.boundingSphere?.center.clone(), LENGTH * 1.5);
+
+  const head = bones[BONES - 1]!;
+  // lower jaw + teeth hinge at the back of the skull
+  const jaw = new Group();
+  jaw.position.set(0, -0.06, 0.02);
+  jaw.add(new Mesh(shared.parts.jaw, shared.hide));
+  const lowerTeeth = new Mesh(shared.parts.teethG, shared.teeth);
+  lowerTeeth.position.y = 0.1;
+  lowerTeeth.scale.y = -1;
+  jaw.add(lowerTeeth);
+  head.add(jaw);
+  head.add(new Mesh(shared.parts.teethG, shared.teeth));
+  // raised eyes with vertical slit pupils
+  for (const side of [1, -1]) {
+    const eye = new Mesh(shared.parts.eye, shared.eye);
+    eye.position.set(side * 0.085, 0.13, 0.11);
+    const pupil = new Mesh(shared.parts.pupil, shared.pupil);
+    pupil.scale.set(0.35, 1.4, 0.5);
+    pupil.position.set(side * 0.1, 0.135, 0.125);
+    head.add(eye, pupil);
+  }
+  // legs on the shoulder and hip bones
+  const legs: Group[] = [];
+  const shoulder = bones[Math.round((LENGTH * 0.72) / SEG)]!;
+  const hip = bones[Math.round((LENGTH * 0.5) / SEG)]!;
+  for (const [bone, z] of [
+    [shoulder, 0.02],
+    [hip, 0.0],
+  ] as const) {
+    for (const side of [1, -1]) {
+      const g = new Group();
+      g.position.set(side * 0.2, -0.04, z);
+      g.scale.x = side;
+      g.add(new Mesh(shared.parts.leg, shared.hide));
+      bone.add(g);
+      legs.push(g);
+    }
+  }
+  return { mesh, bones, jaw, legs };
 }
 
-type GatorMats = ReturnType<typeof gatorMats>;
+type Shared = {
+  body: BufferGeometry;
+  hide: MeshLambertMaterial;
+  teeth: MeshLambertMaterial;
+  eye: MeshLambertMaterial;
+  pupil: MeshBasicMaterial;
+  parts: ReturnType<typeof partGeos>;
+};
 
 export function Gators({ world }: { world: World }) {
   const spots = useMemo(() => placeGators(world), [world]);
-  const geo = useMemo(gatorGeos, []);
-  const mats = useMemo(gatorMats, []);
+  const shared = useMemo<Shared>(() => {
+    const tex = hideTextures();
+    return {
+      body: bodyGeometry(),
+      // wet, slightly glossy hide
+      hide: new MeshLambertMaterial({ map: tex.map }),
+      teeth: new MeshLambertMaterial({ color: '#efe7d0' }),
+      eye: new MeshLambertMaterial({ color: '#c9a62a', emissive: '#2a1f00' }),
+      pupil: new MeshBasicMaterial({ color: '#080604' }),
+      parts: partGeos(),
+    };
+  }, []);
   return (
     <>
       {spots.map((s, i) => (
-        <Gator key={i} home={s} seed={(world.seed ^ (i * 2654435761)) >>> 0} world={world} geo={geo} mats={mats} />
+        <Gator key={i} home={s} seed={(world.seed ^ (i * 2654435761)) >>> 0} world={world} shared={shared} />
       ))}
     </>
   );

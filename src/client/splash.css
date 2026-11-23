@@ -4,6 +4,17 @@
   padding: 0;
 }
 
+:root {
+  --green: #14221a;
+  --green-deep: #0c1610;
+  --green-mid: #102018;
+  --orange: #f0a35e;
+  --orange-dark: #a8642c;
+  --cream: #f2ead8;
+  --sage: #9fb59a;
+  --ink: #1b1408;
+}
+
 html,
 body {
   width: 100%;
@@ -16,74 +27,315 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #14221a;
-  color: #f2ead8;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(240, 163, 94, 0.18), rgba(240, 163, 94, 0) 60%),
+    var(--green);
+  color: var(--cream);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  padding: 16px;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
 }
 
+/* ---------- jungle silhouette ---------- */
 .canopy {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   width: 100%;
-  height: 32%;
-  fill: #0c1610;
+  height: 34%;
+  max-height: 220px;
 }
 
+.canopy-back {
+  fill: var(--green-mid);
+}
+
+.canopy-front {
+  fill: var(--green-deep);
+}
+
+.palm-trunk {
+  fill: none;
+  stroke: var(--green-deep);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+/* ---------- lockup ---------- */
 .content {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 10px;
+  gap: 8px;
+  width: 100%;
   max-width: 420px;
+}
+
+.hero-plane {
+  width: min(200px, 56vw);
+  height: auto;
+  margin-bottom: -6px;
+  overflow: visible;
+}
+
+.smoke circle {
+  fill: rgba(159, 181, 154, 0.28);
+}
+
+.smoke circle:nth-child(1) {
+  fill: rgba(159, 181, 154, 0.1);
+}
+.smoke circle:nth-child(2) {
+  fill: rgba(159, 181, 154, 0.15);
+}
+.smoke circle:nth-child(3) {
+  fill: rgba(159, 181, 154, 0.2);
+}
+
+.plane {
+  animation: wobble 2.4s ease-in-out infinite alternate;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.plane-body {
+  fill: var(--cream);
+}
+
+.plane-wing {
+  fill: #d9cfb8;
+}
+
+.plane-window {
+  fill: var(--green);
+}
+
+.plane-prop {
+  stroke: var(--cream);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.6;
+}
+
+.plane-fire {
+  fill: var(--orange);
+  animation: flicker 0.35s ease-in-out infinite alternate;
+  transform-box: fill-box;
+  transform-origin: bottom;
+}
+
+@keyframes wobble {
+  from {
+    translate: 0 -2px;
+  }
+  to {
+    translate: 0 3px;
+  }
+}
+
+@keyframes flicker {
+  to {
+    transform: scaleY(0.75);
+    opacity: 0.8;
+  }
 }
 
 .eyebrow {
   font-size: 0.75rem;
-  letter-spacing: 0.14em;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: #9fb59a;
+  color: var(--sage);
 }
 
 .title {
-  font-size: clamp(2.4rem, 11vw, 3.6rem);
+  font-size: clamp(2.6rem, 12vw, 3.8rem);
   font-weight: 900;
-  letter-spacing: -0.02em;
-  line-height: 1;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+  text-transform: uppercase;
+}
+
+.title span {
+  color: var(--orange);
 }
 
 .cause {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: #f0a35e;
-  min-height: 1.3em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.cause-chip {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(240, 163, 94, 0.14);
+  border: 1px solid rgba(240, 163, 94, 0.55);
+  color: var(--orange);
+  font-size: 0.9375rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.cause-plus {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sage);
+}
+
+.tagline {
+  font-size: 0.9375rem;
+  font-style: italic;
+  color: rgba(242, 234, 216, 0.8);
+}
+
+/* three-beat "how it plays" strip */
+.steps {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+  list-style: none;
+  width: 100%;
+}
+
+.steps li {
+  flex: 1 1 0;
+  max-width: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px 7px;
+  border-radius: 12px;
+  background: rgba(242, 234, 216, 0.06);
+  border: 1px solid rgba(242, 234, 216, 0.1);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  line-height: 1.15;
+  color: rgba(242, 234, 216, 0.85);
+}
+
+.steps svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: var(--orange);
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .start-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-top: 8px;
-  background: #f0a35e;
-  color: #1b1408;
+  min-height: 48px;
+  background: var(--orange);
+  color: var(--ink);
   border: none;
   border-radius: 999px;
-  padding: 14px 30px;
-  font-size: 1.05rem;
-  font-weight: 800;
+  padding: 14px 32px;
+  font-family: inherit;
+  font-size: 1.0625rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  box-shadow: 0 4px 0 #a8642c;
-  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  box-shadow: 0 4px 0 var(--orange-dark), 0 10px 24px rgba(0, 0, 0, 0.3);
+  transition:
+    transform 0.08s ease,
+    box-shadow 0.08s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.start-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.15s ease;
+}
+
+.start-button:hover svg {
+  transform: translateX(3px);
 }
 
 .start-button:active {
   transform: translateY(3px);
-  box-shadow: 0 1px 0 #a8642c;
+  box-shadow: 0 1px 0 var(--orange-dark), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.start-button:focus-visible {
+  outline: 3px solid var(--cream);
+  outline-offset: 3px;
 }
 
 .sub {
-  font-size: 0.85rem;
-  color: #b9c4b2;
+  font-size: 0.8125rem;
+  color: rgba(242, 234, 216, 0.7);
   max-width: 300px;
+}
+
+/* short inline feed cards: drop the steps first, then the hero art, then the tagline */
+@media (max-height: 560px) {
+  .steps {
+    display: none;
+  }
+}
+
+@media (max-height: 420px) {
+  .hero-plane {
+    width: 120px;
+    margin-bottom: -10px;
+  }
+  .tagline {
+    display: none;
+  }
+}
+
+@media (max-height: 330px) {
+  .hero-plane {
+    display: none;
+  }
+  .content {
+    gap: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plane,
+  .plane-fire {
+    animation: none;
+  }
+}
+
+/* community numbers + streak from the server */
+.community {
+  font-size: 0.8125rem;
+  font-weight: 800;
+  color: var(--orange);
+  letter-spacing: 0.02em;
+}
+
+.streak {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(242, 234, 216, 0.08);
+  border: 1px solid rgba(242, 234, 216, 0.18);
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--cream);
 }

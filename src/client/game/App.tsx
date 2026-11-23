@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { CAUSE_LABEL, dailyFor, type Daily } from '../../shared/daily';
+import { causePair, dailyFor, hasCause, type Daily } from '../../shared/daily';
 import type { InitResponse } from '../../shared/api';
 import { Ambient } from './Ambient';
+import { Arrows, clearArrows } from './Arrows';
+import { Rescue } from './Rescue';
+import { Adaptive } from './Adaptive';
 import { Atmosphere } from './Atmosphere';
 import { Boars } from './Boars';
 import { unlockAudio } from './audio';
@@ -11,11 +14,13 @@ import { Controls } from './Controls';
 import { CrashIntro } from './CrashIntro';
 import { EndCard } from './EndCard';
 import { Gators } from './Gators';
-import { Hud } from './Hud';
+import { Hud, SettingsMenu } from './Hud';
 import { attachKeyboard, input } from './input';
-import { resetIntro } from './intro';
+import { intro, resetIntro } from './intro';
 import { IntroOverlay } from './IntroOverlay';
 import { Minimap } from './Minimap';
+import { TestPanel } from './TestPanel';
+import { resetNet, startRun } from './net';
 import { PerfProbe } from './Perf';
 import { createPickups } from './loot';
 import { Pickups } from './Pickups';
@@ -39,7 +44,8 @@ function initialQuality(): Quality {
   } catch {
     // storage unavailable: fall through to default
   }
-  return 'medium';
+  const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  return touch ? 'low' : 'medium';
 }
 
 // Debug: ?t=0.7 starts the day at that phase (0 dawn .. 0.6 dusk .. 0.8 night)
@@ -58,7 +64,7 @@ let debugPickups: unknown = null;
 try {
   if (new URLSearchParams(window.location.search).has('debug')) {
     void Promise.all([import('./state'), import('./intro'), import('./survival')]).then(([s, i, v]) => {
-      Object.assign(window, { __cd: { run: s.run, tiger: s.tiger, intro: i.intro, survival: v.survival, actions: s.actions, debugReq: s.debugReq, creatures: s.creatures, combat: s.combat, pickups: () => debugPickups } });
+      Object.assign(window, { __cd: { run: s.run, tiger: s.tiger, intro: i.intro, survival: v.survival, actions: s.actions, debugReq: s.debugReq, creatures: s.creatures, combat: s.combat, player: playerPos, pickups: () => debugPickups } });
     });
   }
 } catch {
@@ -73,6 +79,7 @@ export function App() {
   const [statsEl, setStatsEl] = useState<HTMLDivElement | null>(null);
   const [clockEl, setClockEl] = useState<HTMLDivElement | null>(null);
   const [runId, setRunId] = useState(0);
+  const [tester, setTester] = useState(false);
   const version = useSyncExternalStore(subscribe, getVersion);
 
   const world = useMemo(() => {
@@ -86,15 +93,22 @@ export function App() {
   const pickups = useMemo(() => {
     void runId;
     gameClock.elapsed = 0;
-    gameClock.startPhase = debugStartPhase() ?? (daily.cause === 'storm' ? 0.6 : 0.22);
-    const list = createPickups(world, daily.cause);
+    gameClock.startPhase = debugStartPhase() ?? (hasCause(daily, 'storm') ? 0.6 : 0.22);
+    const list = createPickups(world, hasCause(daily, 'bird'));
     debugPickups = list;
     return list;
-  }, [world, daily.cause, runId]);
+  }, [world, daily, runId]);
 
   const q = QUALITY[quality];
+  // stable reference: re-renders must not reset the adaptive resolution
+  const dprRange = useMemo<[number, number]>(() => [0.6, Math.min(q.dpr, window.devicePixelRatio || 1)], [q.dpr]);
 
   useEffect(() => attachKeyboard(), []);
+
+  useEffect(() => {
+    resetNet();
+    startRun();
+  }, [runId]);
 
   // audio needs a user gesture; the tap that opened the game may not count inside the iframe
   useEffect(() => {
@@ -115,6 +129,7 @@ export function App() {
       .then((data: InitResponse) => {
         if (cancelled) return;
         setServer('ok');
+        setTester(data.tester === true);
         if (data.daily.seed !== daily.seed) setDaily(data.daily);
       })
       .catch(() => !cancelled && setServer('offline'));
@@ -136,8 +151,8 @@ export function App() {
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [playing, runId]);
 
-  const cycleQuality = () => {
-    const next: Quality = quality === 'low' ? 'medium' : quality === 'medium' ? 'high' : 'low';
+  const chooseQuality = (next: Quality) => {
+    if (next === quality) return;
     setQuality(next);
     try {
       localStorage.setItem(QUALITY_KEY, next);
@@ -148,7 +163,9 @@ export function App() {
 
   const retry = () => {
     resetRun();
+    clearArrows();
     resetIntro();
+    intro.started = true;
     setRunId((n) => n + 1);
   };
 
@@ -156,12 +173,12 @@ export function App() {
   const inIntro = run.phase === 'intro';
 
   return (
-    <div className="game">
+    <div className={run.phase === 'rescued' ? 'game cine' : 'game'}>
       <Canvas
         key={quality}
         className="scene"
         shadows={q.shadows ? 'percentage' : false}
-        dpr={[1, Math.min(q.dpr, window.devicePixelRatio || 1)]}
+        dpr={dprRange}
         gl={{ antialias: q.aa, powerPreference: 'high-performance', stencil: false }}
         onCreated={({ gl }) => {
           gl.toneMappingExposure = 1.08;
@@ -173,7 +190,7 @@ export function App() {
         <Vegetation world={world} shadows={q.shadows} density={q.density} />
         <Ambient heightAt={world.heightAt} />
         <group key={runId}>
-          {inIntro ? <CrashIntro world={world} cause={daily.cause} /> : <Wreck world={world} shadows={q.shadows} />}
+          {inIntro ? <CrashIntro world={world} causes={[daily.cause, daily.second]} /> : <Wreck world={world} shadows={q.shadows} />}
           <Pickups pickups={pickups} version={version} />
           <Campfires version={version} />
           <Player world={world} shadows={q.shadows} pickups={pickups} />
@@ -181,12 +198,15 @@ export function App() {
           <Snakes world={world} />
           <Boars world={world} />
           <Gators world={world} />
+          <Arrows world={world} />
+          <Rescue world={world} />
         </group>
         <PerfProbe statsEl={statsEl} clockEl={clockEl} />
+        <Adaptive maxDpr={Math.min(q.dpr, window.devicePixelRatio || 1)} shadows={q.shadows} />
       </Canvas>
 
       <div className="vignette" />
-      {daily.cause === 'storm' && <div className="rain" />}
+      {hasCause(daily, 'storm') && <div className="rain" />}
       <Controls />
 
       {!inIntro && (
@@ -194,17 +214,15 @@ export function App() {
           <StatRings />
           <div className="hud-top">
             <div className="hud-left">
-              <div className="crash-tag">{CAUSE_LABEL[daily.cause]} · Jungle</div>
+              <div className="crash-tag">{causePair(daily)}</div>
               <div className="clock" ref={setClockEl} />
             </div>
-            <div className="hud-right">
-              <button className="chip" onClick={() => setShowStats((v) => !v)}>
-                fps
-              </button>
-              <button className="chip" onClick={cycleQuality}>
-                {quality}
-              </button>
-            </div>
+            <SettingsMenu
+              quality={quality}
+              onQuality={chooseQuality}
+              showStats={showStats}
+              onToggleStats={() => setShowStats((v) => !v)}
+            />
           </div>
         </>
       )}
@@ -216,7 +234,8 @@ export function App() {
 
       <Hud world={world} />
       <Minimap world={world} pickups={pickups} />
-      {inIntro && <IntroOverlay key={runId} cause={daily.cause} />}
+      {tester && <TestPanel />}
+      {inIntro && <IntroOverlay key={runId} causes={[daily.cause, daily.second]} />}
       <EndCard daily={daily} onRetry={retry} />
     </div>
   );
@@ -229,5 +248,5 @@ function hint(text: string) {
 
 function toastHint() {
   const touch = 'ontouchstart' in window;
-  hint(touch ? 'Drag left side to move · drag right side to look' : 'WASD move · mouse look · E grab · F attack · Space dodge · C craft');
+  hint(touch ? 'Left thumb moves · right thumb looks' : 'WASD move · mouse look · E grab · F attack · R shoot · Space dodge · C craft');
 }

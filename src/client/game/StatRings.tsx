@@ -16,6 +16,7 @@ const C = 2 * Math.PI * R;
 export function StatRings() {
   const arcs = useRef<(SVGCircleElement | null)[]>([]);
   const wraps = useRef<(HTMLDivElement | null)[]>([]);
+  const values = useRef<(HTMLSpanElement | null)[]>([]);
   const drink = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -25,7 +26,13 @@ export function StatRings() {
         const arc = arcs.current[i];
         if (arc) arc.style.strokeDashoffset = String(C * (1 - v / 100));
         const w = wraps.current[i];
-        if (w) w.classList.toggle('low', v < 25);
+        if (w) {
+          w.classList.toggle('low', v < 25);
+          if (r.key === 'thirst') w.classList.toggle('drinking', survival.drinking);
+        }
+        const n = values.current[i];
+        const text = String(Math.max(0, Math.round(v)));
+        if (n && n.textContent !== text) n.textContent = text;
       });
       drink.current?.classList.toggle('on', survival.drinking);
     }, 150);
@@ -33,11 +40,15 @@ export function StatRings() {
   }, []);
 
   return (
-    <>
-    <div ref={drink} className="drink">Drinking…</div>
     <div className="rings">
       {RINGS.map((r, i) => (
-        <div className="ring" key={r.key} ref={(el) => void (wraps.current[i] = el)} title={r.label}>
+        <div
+          className={`ring ring-${r.key}`}
+          key={r.key}
+          ref={(el) => void (wraps.current[i] = el)}
+          title={r.label}
+          style={{ color: r.color }}
+        >
           <svg viewBox="0 0 48 48" aria-label={r.label}>
             <circle cx="24" cy="24" r={R} className="ring-track" />
             <circle
@@ -52,12 +63,19 @@ export function StatRings() {
               transform="rotate(-90 24 24)"
             />
             <g transform="translate(12 12)">
-              <path d={r.icon} fill="none" stroke="#f2ead8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              <path className="ring-icon" d={r.icon} />
             </g>
           </svg>
+          <span className="ring-val" ref={(el) => void (values.current[i] = el)}>
+            100
+          </span>
+          {r.key === 'thirst' && (
+            <div ref={drink} className="drink">
+              Drinking
+            </div>
+          )}
         </div>
       ))}
     </div>
-    </>
   );
 }

@@ -42,8 +42,11 @@ export const run = {
   inv: freshInventory(),
   spear: false,
   knife: false,
+  bow: false,
+  arrows: 0,
   startItem: null as StartItem | null,
-  campfires: [] as { x: number; y: number; z: number; age: number }[],
+  campfires: [] as { x: number; y: number; z: number; age: number; out: boolean }[],
+  rescueDone: false, // rescue cinematic finished: the end card may show
   deathCause: null as DeathCause | null,
   lastHurt: 'injuries' as DeathCause,
   timeAlive: 0,
@@ -61,7 +64,10 @@ export const run = {
 };
 
 // UI -> scene one-shot requests, consumed in Player's frame loop.
-export const actions = { interact: false, attack: false, dodge: false };
+export const actions = { interact: false, attack: false, dodge: false, shoot: false };
+
+// Rescue cinematic: Rescue.tsx drives it and owns the camera; Player follows x/y/z while active.
+export const rescueFx = { active: false, t: 0, x: 0, y: 0, z: 0 };
 
 let version = 0;
 const listeners = new Set<() => void>();
@@ -115,16 +121,20 @@ export function rescue() {
   emit();
 }
 
-export type Recipe = { id: 'spear' | 'campfire' | 'medkit'; label: string; cost: Partial<Record<ItemKind, number>>; hint: string };
+export type Recipe = { id: 'spear' | 'bow' | 'arrows' | 'campfire' | 'medkit'; label: string; cost: Partial<Record<ItemKind, number>>; hint: string };
 
 export const RECIPES: Recipe[] = [
   { id: 'spear', label: 'Spear', cost: { wood: 2, stone: 1 }, hint: 'Fight back' },
+  { id: 'bow', label: 'Bow + 4 arrows', cost: { wood: 3, herb: 2 }, hint: 'Shoot from range' },
+  { id: 'arrows', label: '3 arrows', cost: { wood: 1, stone: 1 }, hint: 'Ammo for the bow' },
   { id: 'campfire', label: 'Campfire', cost: { wood: 4, stone: 3 }, hint: 'Warmth · keeps the tiger away' },
   { id: 'medkit', label: 'Herbal poultice', cost: { herb: 3 }, hint: '+35 health' },
 ];
 
 export function canCraft(r: Recipe) {
   if (r.id === 'spear' && run.spear) return false;
+  if (r.id === 'bow' && run.bow) return false;
+  if (r.id === 'arrows' && !run.bow) return false;
   return Object.entries(r.cost).every(([k, n]) => run.inv[k as ItemKind] >= (n ?? 0));
 }
 
@@ -133,6 +143,11 @@ export function resetRun() {
   run.inv = freshInventory();
   run.spear = false;
   run.knife = false;
+  run.bow = false;
+  run.arrows = 0;
+  run.rescueDone = false;
+  rescueFx.active = false;
+  rescueFx.t = 0;
   run.startItem = null;
   run.campfires = [];
   run.deathCause = null;
@@ -149,7 +164,7 @@ export function resetRun() {
   run.dodgeNow = false;
   run.nearby = null;
   run.toast = null;
-  actions.interact = actions.attack = actions.dodge = false;
+  actions.interact = actions.attack = actions.dodge = actions.shoot = false;
   survival.health = 100;
   survival.hunger = 85;
   survival.thirst = 70;

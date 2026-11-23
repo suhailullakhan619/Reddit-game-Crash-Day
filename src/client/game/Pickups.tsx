@@ -168,7 +168,7 @@ export function Pickups({ pickups, version }: { pickups: Pickup[]; version: numb
     m.visible = !!target;
     if (target) {
       const s = 1 + Math.sin(state.clock.elapsedTime * 5) * 0.08;
-      m.position.set(target.x, target.y + 0.04, target.z);
+      m.position.set(target.x, target.y + 0.15, target.z);
       m.scale.set(s, s, s);
     }
   });
@@ -181,13 +181,12 @@ export function Pickups({ pickups, version }: { pickups: Pickup[]; version: numb
             key={kind}
             ref={(el) => void (refs.current[kind] = el)}
             args={[geos[kind], mat, byKind[kind].length]}
-            frustumCulled={false}
           />
         ) : null
       )}
-      <mesh ref={marker} rotation-x={-Math.PI / 2} visible={false}>
+      <mesh ref={marker} rotation-x={-Math.PI / 2} visible={false} renderOrder={2}>
         <ringGeometry args={[0.55, 0.68, 28]} />
-        <meshBasicMaterial color="#ffe7a8" transparent opacity={0.85} depthWrite={false} />
+        <meshBasicMaterial color="#ffe7a8" transparent opacity={0.85} depthWrite={false} depthTest={false} />
       </mesh>
     </>
   );

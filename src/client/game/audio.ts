@@ -360,3 +360,49 @@ export function sfxSnap() {
   if (t) t.o.frequency.exponentialRampToValueAtTime(90, t.c.currentTime + 0.07);
   sfxThud();
 }
+
+// bow release: a plucked low string plus a short whoosh
+export function sfxBow() {
+  const t = tone('triangle', 196, 0.32, 0.004, 0.22);
+  if (t) t.o.frequency.exponentialRampToValueAtTime(110, t.c.currentTime + 0.18);
+  sfxSwing();
+}
+
+// flare launch: hissing rocket
+export function sfxFlare() {
+  const n = noise(1.4, 'highpass', 2400, 0.7);
+  if (!n) return;
+  env(n.g, n.c, 0.28, 0.03, 1.3);
+  n.f.frequency.exponentialRampToValueAtTime(900, n.c.currentTime + 1.3);
+  n.src.start();
+  n.src.stop(n.c.currentTime + 1.45);
+}
+
+// helicopter: low noise chopped by a ~12 Hz rotor LFO; set(v) is proximity 0..1
+export function startRotor(): Loop | null {
+  const n = noise(30, 'lowpass', 420, 0.8);
+  if (!n) return null;
+  const c = n.c;
+  n.g.gain.value = 0.0001;
+  const lfo = c.createOscillator();
+  lfo.type = 'sine';
+  lfo.frequency.value = 12;
+  const depth = c.createGain();
+  depth.gain.value = 0;
+  lfo.connect(depth).connect(n.g.gain);
+  n.src.start();
+  lfo.start();
+  return {
+    set: (v) => {
+      n.g.gain.setTargetAtTime(0.02 + v * 0.24, c.currentTime, 0.3);
+      depth.gain.setTargetAtTime(v * 0.2, c.currentTime, 0.3);
+      n.f.frequency.setTargetAtTime(260 + v * 380, c.currentTime, 0.3);
+    },
+    stop: () => {
+      n.g.gain.setTargetAtTime(0.0001, c.currentTime, 0.4);
+      depth.gain.setTargetAtTime(0, c.currentTime, 0.4);
+      n.src.stop(c.currentTime + 2);
+      lfo.stop(c.currentTime + 2);
+    },
+  };
+}

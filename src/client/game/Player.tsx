@@ -1,11 +1,14 @@
 import { useRef, useSyncExternalStore } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import type { Group } from 'three';
-import { sfxDrink, sfxPickup, sfxSwing } from './audio';
+import { sfxBow, sfxDrink, sfxPickup, sfxSwing } from './audio';
+import { ARROW_GRAVITY, ARROW_SPEED, fireArrow } from './Arrows';
+import { DAY_WARNING, hard } from './difficulty';
 import { input } from './input';
+import { track } from './net';
 import { PICKUP_RADIUS, type Pickup } from './loot';
 import { nearestRef } from './Pickups';
-import { gameClock, playerPos } from './shared';
+import { gameClock, playerPos, view } from './shared';
 import {
   actions,
   addItem,
@@ -18,6 +21,7 @@ import {
   ITEM_LABEL,
   RESCUE_DAY,
   rescue,
+  rescueFx,
   run,
   subscribe,
   toast,
@@ -34,6 +38,35 @@ const DODGE_TIME = 0.38;
 const DODGE_SPEED = 12;
 const ATTACK_TIME = 0.45;
 
+// Distance along the camera ray (from the player's head) before it enters a tree.
+// Trees are modelled as a trunk cylinder plus a crown ellipsoid, matching Vegetation.tsx.
+function occludedDistance(world: World, hx: number, hy: number, hz: number, dx: number, dy: number, dz: number, max: number) {
+  let best = max;
+  const minX = Math.min(hx, hx + dx * max) - 4;
+  const maxX = Math.max(hx, hx + dx * max) + 4;
+  const minZ = Math.min(hz, hz + dz * max) - 4;
+  const maxZ = Math.max(hz, hz + dz * max) + 4;
+  const len2 = dx * dx + dz * dz;
+  for (const t of world.trees) {
+    if (t.x < minX || t.x > maxX || t.z < minZ || t.z > maxZ) continue;
+    // closest point of the ray (in XZ) to the trunk axis
+    const u = len2 > 1e-6 ? Math.max(0, Math.min(max, ((t.x - hx) * dx + (t.z - hz) * dz) / len2)) : 0;
+    const px = hx + dx * u - t.x;
+    const pz = hz + dz * u - t.z;
+    const r = Math.hypot(px, pz);
+    const ground = world.heightAt(t.x, t.z);
+    const y = hy + dy * u;
+    const trunkTop = ground + (t.kind === 1 ? 7 : 4.4) * t.s;
+    const crownR = (t.kind === 1 ? 2.8 : 2.1) * t.s;
+    const crownBottom = trunkTop - (t.kind === 1 ? 0.8 : 0.6) * t.s;
+    const crownTop = trunkTop + (t.kind === 1 ? 0.6 : 2.4) * t.s;
+    const hitTrunk = r < 0.5 * t.s + 0.35 && y < trunkTop;
+    const hitCrown = r < crownR && y > crownBottom && y < crownTop;
+    if (hitTrunk || hitCrown) best = Math.min(best, Math.max(1.6, u - 0.6));
+  }
+  return best;
+}
+
 function dampAngle(a: number, b: number, k: number) {
   let d = b - a;
   while (d > Math.PI) d -= Math.PI * 2;
@@ -45,6 +78,7 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
   const root = useRef<Group>(null);
   const rig = useRef<SurvivorHandle>(null);
   const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
   useSyncExternalStore(subscribe, getVersion);
   const weapon: Weapon = run.spear ? 'spear' : run.knife ? 'knife' : 'none';
 
@@ -60,6 +94,7 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
     walk: 0,
     speed: 0,
     camInit: false,
+    camDist: CAM_DIST,
     time: 0,
     dodge: 0, // time left in roll
     dodgeCd: 0,
@@ -67,6 +102,7 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
     dodgeZ: 0,
     attack: 0, // time left in swing
     attackCd: 0,
+    shootCd: 0,
     struck: false,
     wasDrinking: false,
     shake: 0,
@@ -84,6 +120,19 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
       return;
     }
     if (root.current) root.current.visible = true;
+    // rescue cinematic: hang from the helicopter rope; Rescue.tsx owns the camera
+    if (rescueFx.active) {
+      s.time += dt;
+      s.x = rescueFx.x;
+      s.y = rescueFx.y;
+      s.z = rescueFx.z;
+      root.current?.position.set(s.x, s.y, s.z);
+      if (root.current) root.current.rotation.z = 0;
+      rig.current?.pose({ walk: s.walk, speed: 0, swim: false, time: s.time, attack: 0, dodge: 0 });
+      playerPos.set(s.x, s.y, s.z);
+      actions.interact = actions.attack = actions.dodge = actions.shoot = false;
+      return;
+    }
     if (debugReq.player) {
       s.x = debugReq.player.x;
       s.z = debugReq.player.z;
@@ -95,15 +144,39 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
       run.timeAlive += dt;
       const day = 1 + Math.floor(gameClock.startPhase + gameClock.elapsed / gameClock.dayLength);
       if (day !== run.day) {
+        track('day_survived', `day${Math.min(day - 1, 5)}`);
         run.day = day;
         if (day >= RESCUE_DAY) rescue();
-        else toast(`Day ${day}. You made it through the night.`);
+        else toast(DAY_WARNING[day] ?? `Day ${day}. You made it through the night.`);
         emit();
       }
     }
 
     // camera look input
+    const looking = input.lookDX !== 0 || input.lookDY !== 0;
     s.yaw -= input.lookDX * 0.0065;
+    // portrait phones see a narrow slice sideways: widen the view so threats stay in frame
+    {
+      const aspect = size.width / Math.max(1, size.height);
+      const wantFov = aspect < 0.8 ? 74 : aspect < 1.2 ? 66 : 60;
+      if ('fov' in camera && Math.abs(camera.fov - wantFov) > 0.1) {
+        camera.fov = wantFov;
+        camera.updateProjectionMatrix();
+      }
+    }
+    view.camera = camera;
+    // an animal winding up to attack: swing the camera toward it so the lunge is visible
+    if (playing && !looking) {
+      let target: (typeof creatures)[number] | null = null;
+      for (const c of creatures) if (c.alive && c.windup && (!target || c.danger > target.danger)) target = c;
+      if (target) {
+        const want = Math.atan2(-(target.x - s.x), -(target.z - s.z));
+        let d = want - s.yaw;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        s.yaw += d * Math.min(1, dt * 4);
+      }
+    }
     s.pitch = Math.min(1.15, Math.max(0.08, s.pitch + input.lookDY * 0.004));
     input.lookDX = 0;
     input.lookDY = 0;
@@ -211,6 +284,61 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
       }
     }
 
+    // --- bow ---------------------------------------------------------------------
+    s.shootCd = Math.max(0, s.shootCd - dt);
+    if (actions.shoot) {
+      actions.shoot = false;
+      if (playing && run.bow && s.shootCd <= 0 && s.dodge <= 0) {
+        if (run.arrows <= 0) toast('Out of arrows. Craft more: 1 wood + 1 stone.');
+        else {
+          // aim along the camera; snap to the animal closest to the crosshair line
+          const cfx = -Math.sin(s.yaw);
+          const cfz = -Math.cos(s.yaw);
+          let aim: (typeof creatures)[number] | null = null;
+          let aimScore = Infinity;
+          for (const c of creatures) {
+            if (!c.alive) continue;
+            const tdx = c.x - s.x;
+            const tdz = c.z - s.z;
+            const d = Math.hypot(tdx, tdz);
+            if (d > 34 || d < 0.5) continue;
+            const ang = Math.acos(Math.max(-1, Math.min(1, (tdx * cfx + tdz * cfz) / d)));
+            if (ang > 0.55) continue;
+            const score = ang * 20 + d * 0.15 + (c.windup ? -3 : 0);
+            if (score < aimScore) {
+              aimScore = score;
+              aim = c;
+            }
+          }
+          const ox = s.x;
+          const oy = s.y + 1.45;
+          const oz = s.z;
+          let dx = cfx;
+          let dz = cfz;
+          let vy = 0.6;
+          if (aim) {
+            const tdx = aim.x - ox;
+            const tdz = aim.z - oz;
+            const d = Math.hypot(tdx, tdz) || 1;
+            dx = tdx / d;
+            dz = tdz / d;
+            const ty = world.heightAt(aim.x, aim.z) + (aim.kind === 'snake' ? 0.15 : aim.kind === 'gator' ? 0.25 : 0.7);
+            const t = d / ARROW_SPEED;
+            // lead the drop so the arrow lands on target
+            vy = (ty - oy) / t + 0.5 * ARROW_GRAVITY * t;
+          }
+          fireArrow(ox + dx * 0.5, oy, oz + dz * 0.5, dx * ARROW_SPEED, vy, dz * ARROW_SPEED);
+          s.facing = Math.atan2(dx, dz);
+          run.arrows--;
+          s.shootCd = 0.7;
+          s.attack = ATTACK_TIME;
+          s.struck = true; // pose only, no melee hit
+          sfxBow();
+          emit();
+        }
+      }
+    }
+
     const g = world.heightAt(s.x, s.z);
     const targetY = g < WATER_LEVEL - 0.7 ? WATER_LEVEL - 0.95 : g;
     s.y += (targetY - s.y) * Math.min(1, dt * 14);
@@ -218,10 +346,21 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
     // --- survival ---------------------------------------------------------------
     if (playing) {
       const inWater = g < WATER_LEVEL - 0.1;
+      // campfires burn out (sooner on later days): rebuild them to stay warm and safe
+      const life = hard.fireLife();
+      for (const f of run.campfires) {
+        if (f.out) continue;
+        f.age += dt;
+        if (f.age > life) {
+          f.out = true;
+          if (Math.hypot(f.x - s.x, f.z - s.z) < 25) toast('Your campfire has burned out.');
+          emit();
+        }
+      }
       const nearFire =
         Math.hypot(s.x - world.wreck.x, s.z - world.wreck.z) < 6 ||
-        run.campfires.some((f) => Math.hypot(f.x - s.x, f.z - s.z) < 4);
-      const drain = tickSurvival(dt, inWater, nearFire);
+        run.campfires.some((f) => !f.out && Math.hypot(f.x - s.x, f.z - s.z) < 4);
+      const drain = tickSurvival(dt, inWater, nearFire, hard.drain(), hard.cold());
       if (drain) damage(dt * 1.6, drain);
       if (run.poisoned) damage(dt * 1.1, 'venom');
       if (inWater && !s.wasDrinking && g > WATER_LEVEL - 0.7) sfxDrink();
@@ -293,9 +432,14 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
 
     // --- third-person camera ------------------------------------------------------------
     const cp = Math.cos(s.pitch);
-    const tx = s.x + Math.sin(s.yaw) * cp * CAM_DIST;
-    const tz = s.z + Math.cos(s.yaw) * cp * CAM_DIST;
-    let ty = s.y + 1.4 + Math.sin(s.pitch) * CAM_DIST;
+    // pull the camera in when a trunk or tree crown sits between it and the player
+    // (in dense jungle the full-distance camera ends up inside the leaves)
+    const want = occludedDistance(world, s.x, s.y + 1.4, s.z, Math.sin(s.yaw) * cp, Math.sin(s.pitch), Math.cos(s.yaw) * cp, CAM_DIST);
+    s.camDist += (want - s.camDist) * Math.min(1, dt * (want < s.camDist ? 14 : 3));
+    const dist = s.camDist;
+    const tx = s.x + Math.sin(s.yaw) * cp * dist;
+    const tz = s.z + Math.cos(s.yaw) * cp * dist;
+    let ty = s.y + 1.4 + Math.sin(s.pitch) * dist;
     ty = Math.max(ty, world.heightAt(tx, tz) + 0.6, WATER_LEVEL + 0.4);
     if (!s.camInit) {
       camera.position.set(tx, ty, tz);
@@ -313,7 +457,7 @@ export function Player({ world, shadows, pickups }: { world: World; shadows: boo
 
   return (
     <group ref={root}>
-      <Survivor ref={rig} shadows={shadows} weapon={weapon} />
+      <Survivor ref={rig} shadows={shadows} weapon={weapon} bow={run.bow} />
     </group>
   );
 }

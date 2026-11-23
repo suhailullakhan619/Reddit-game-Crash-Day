@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
   BufferAttribute,
@@ -13,8 +13,10 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { sfxGrowl, sfxHit, sfxRoar } from './audio';
+import { hard } from './difficulty';
+import { track } from './net';
 import { atmo } from './fx';
-import { playerPos } from './shared';
+import { mergeStatic, playerPos } from './shared';
 import { combat, damage, debugReq, createCreature, run, tiger, toast, emit, creatureSlot } from './state';
 import { mulberry32, WORLD_HALF, type World } from './world';
 
@@ -269,7 +271,7 @@ export function Tiger({ world, shadows }: { world: World; shadows: boolean }) {
         a.timer = -10;
       }
     }
-    const nearFire = run.campfires.some((f) => Math.hypot(f.x - a.x, f.z - a.z) < 9 || Math.hypot(f.x - px, f.z - pz) < 5);
+    const nearFire = run.campfires.some((f) => !f.out && (Math.hypot(f.x - a.x, f.z - a.z) < 9 || Math.hypot(f.x - px, f.z - pz) < 5));
     if (nearFire && (tiger.mode === 'stalk' || tiger.mode === 'windup')) {
       setMode('flee');
       if (!a.warned) {
@@ -281,7 +283,7 @@ export function Tiger({ world, shadows }: { world: World; shadows: boolean }) {
     // --- behaviour -------------------------------------------------------
     let targetSpeed = 0;
     let face = a.heading;
-    const aggro = run.timeAlive > 35; // grace period after the crash
+    const aggro = run.timeAlive > 25; // grace period after the crash
 
     switch (tiger.mode) {
       case 'idle': {
@@ -293,8 +295,9 @@ export function Tiger({ world, shadows }: { world: World; shadows: boolean }) {
         }
         face = Math.atan2(a.wander.x - a.x, a.wander.z - a.z);
         targetSpeed = 1.6;
-        const sense = night > 0.5 ? 38 : 28;
+        const sense = (night > 0.5 ? 38 : 28) * hard.sense();
         if (aggro && dist < sense && !nearFire) {
+          track('tiger_encounter', undefined, true);
           setMode('stalk');
           a.stalkTime = 0;
           sfxGrowl(0.6);
@@ -316,7 +319,7 @@ export function Tiger({ world, shadows }: { world: World; shadows: boolean }) {
           sfxGrowl(Math.min(1, 14 / Math.max(dist, 1)));
           a.nextGrowl = 3.5 + a.rng() * 3;
         }
-        const ready = a.stalkTime > (night > 0.5 ? 4 : 6);
+        const ready = a.stalkTime > (night > 0.5 ? 4 : 6) * hard.windup();
         if (ready && dist < 12.5) {
           setMode('windup');
           sfxRoar();
@@ -327,7 +330,7 @@ export function Tiger({ world, shadows }: { world: World; shadows: boolean }) {
       case 'windup': {
         face = Math.atan2(dx, dz);
         targetSpeed = 0;
-        const wind = night > 0.5 ? 0.85 : 1.05;
+        const wind = (night > 0.5 ? 0.85 : 1.05) * hard.windup();
         if (a.timer > wind) {
           // lunge at where the player is now (no homing: dodging sideways works)
           const len = dist || 1;
@@ -340,9 +343,9 @@ export function Tiger({ world, shadows }: { world: World; shadows: boolean }) {
       }
       case 'charge': {
         face = Math.atan2(a.chargeDir.x, a.chargeDir.z);
-        targetSpeed = 15;
+        targetSpeed = 15 * hard.speed();
         if (dist < 1.35 && combat.invuln <= 0) {
-          damage(28, 'tiger');
+          damage(28 * hard.dmg(), 'tiger');
           combat.knockX = a.chargeDir.x * 7;
           combat.knockZ = a.chargeDir.z * 7;
           setMode('recover');
@@ -461,6 +464,8 @@ export function Tiger({ world, shadows }: { world: World; shadows: boolean }) {
   });
 
   const cs = shadows;
+  // rigid parts of each rig segment merge per material (about 21 draws down to ~12)
+  useLayoutEffect(() => (root.current ? mergeStatic(root.current) : undefined), [cs, geo, mats]);
   const legPos: [number, number, number][] = [
     [0.22, -0.05, 0.62],
     [-0.22, -0.05, 0.62],

@@ -14,10 +14,11 @@ import {
 } from 'three';
 import { atmo, fxTime } from './fx';
 import { gameClock, playerPos } from './shared';
+import { intro } from './intro';
 import { run } from './state';
 import { mulberry32 } from './world';
 
-// Day phase 0..1 over one in-game day (90 s). Keyframes for sky, fog and light.
+// Day phase 0..1 over one in-game day (60 s). Keyframes for sky, fog and light.
 type Key = {
   t: number;
   sky: string; // horizon + fog
@@ -170,9 +171,11 @@ export function Atmosphere({ shadows, shadowMap }: { shadows: boolean; shadowMap
     fogColor.copy(atmo.horizon);
     if (scene.fog instanceof Fog) {
       // the aerial crash cinematic needs a longer view distance
+      // during the low dive the haze closes in: far chunks/tiles hide with it (see Chunked)
       const aerial = run.phase === 'intro';
-      scene.fog.near += ((aerial ? 70 : 22) - scene.fog.near) * Math.min(1, step * 3);
-      scene.fog.far += ((aerial ? 250 : 105) - scene.fog.far) * Math.min(1, step * 3);
+      const low = aerial && (intro.stage === 'dive' || intro.stage === 'black' || intro.stage === 'wake');
+      scene.fog.near += ((low ? 45 : aerial ? 70 : 22) - scene.fog.near) * Math.min(1, step * 3);
+      scene.fog.far += ((low ? 160 : aerial ? 250 : 105) - scene.fog.far) * Math.min(1, step * 3);
     }
 
     // sun arcs east to west during the day; at night a fixed moon angle
@@ -217,10 +220,10 @@ export function Atmosphere({ shadows, shadowMap }: { shadows: boolean; shadowMap
         castShadow={shadows}
         shadow-mapSize-width={shadowMap}
         shadow-mapSize-height={shadowMap}
-        shadow-camera-left={-26}
-        shadow-camera-right={26}
-        shadow-camera-top={26}
-        shadow-camera-bottom={-26}
+        shadow-camera-left={-22}
+        shadow-camera-right={22}
+        shadow-camera-top={22}
+        shadow-camera-bottom={-22}
         shadow-camera-near={1}
         shadow-camera-far={110}
         shadow-bias={-0.0008}

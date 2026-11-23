@@ -1,12 +1,16 @@
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { AdditiveBlending, BufferAttribute, BufferGeometry, CanvasTexture, type Points, type PointsMaterial } from 'three';
+import { AdditiveBlending, BufferAttribute, BufferGeometry, CanvasTexture, Color, type Points, type PointsMaterial } from 'three';
 import { atmo, fxTime } from './fx';
 import { playerPos } from './shared';
 import { mulberry32 } from './world';
 
 const COUNT = 90;
 const SPAN = 26;
+// ground height under each particle is refreshed on 1 of every HEIGHT_EVERY frames (staggered)
+const HEIGHT_EVERY = 4;
+const FIREFLY = new Color('#d8ff7a');
+const POLLEN = new Color('#fff6d8');
 
 function glowTexture() {
   const c = document.createElement('canvas');
@@ -30,7 +34,7 @@ export function Ambient({ heightAt }: { heightAt: (x: number, z: number) => numb
     for (let i = 0; i < COUNT * 4; i++) seeds[i] = rng();
     const geo = new BufferGeometry();
     geo.setAttribute('position', new BufferAttribute(new Float32Array(COUNT * 3), 3));
-    return { seeds, geo, tex: glowTexture() };
+    return { seeds, geo, tex: glowTexture(), ground: new Float32Array(COUNT).fill(Number.NaN), frame: 0, night: false };
   }, []);
 
   useFrame(() => {
@@ -39,6 +43,7 @@ export function Ambient({ heightAt }: { heightAt: (x: number, z: number) => numb
     const t = fxTime.value;
     const night = atmo.night;
     const pos = data.geo.attributes.position!;
+    const slot = data.frame++ % HEIGHT_EVERY;
     for (let i = 0; i < COUNT; i++) {
       const s0 = data.seeds[i * 4]!;
       const s1 = data.seeds[i * 4 + 1]!;
@@ -49,22 +54,24 @@ export function Ambient({ heightAt }: { heightAt: (x: number, z: number) => numb
       let z = s1 * SPAN + Math.cos(t * (0.25 + s3 * 0.4) + s2 * 7) * 1.2;
       x = playerPos.x + ((((x - playerPos.x) % SPAN) + SPAN * 1.5) % SPAN) - SPAN / 2;
       z = playerPos.z + ((((z - playerPos.z) % SPAN) + SPAN * 1.5) % SPAN) - SPAN / 2;
-      const y = heightAt(x, z) + 0.6 + s2 * 2.2 + Math.sin(t * 0.8 + s0 * 20) * 0.3;
+      let ground = data.ground[i]!;
+      if (i % HEIGHT_EVERY === slot || Number.isNaN(ground)) {
+        ground = heightAt(x, z);
+        data.ground[i] = ground;
+      }
+      const y = ground + 0.6 + s2 * 2.2 + Math.sin(t * 0.8 + s0 * 20) * 0.3;
       pos.setXYZ(i, x, y, z);
     }
     pos.needsUpdate = true;
     const m = pts.material;
     const blink = 0.75 + Math.sin(t * 3) * 0.25;
-    if (night > 0.3) {
-      m.color.set('#d8ff7a');
-      m.size = 0.32;
-      m.opacity = Math.min(1, (night - 0.3) * 2) * blink;
-      m.blending = AdditiveBlending;
-    } else {
-      m.color.set('#fff6d8');
-      m.size = 0.09;
-      m.opacity = 0.5 * (1 - night);
+    const isNight = night > 0.3;
+    if (isNight !== data.night || data.frame === 1) {
+      data.night = isNight;
+      m.color.copy(isNight ? FIREFLY : POLLEN);
+      m.size = isNight ? 0.32 : 0.09;
     }
+    m.opacity = isNight ? Math.min(1, (night - 0.3) * 2) * blink : 0.5 * (1 - night);
   });
 
   return (

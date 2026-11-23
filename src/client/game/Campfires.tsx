@@ -5,7 +5,8 @@ import { run } from './state';
 
 // Player-built campfires: ring of stones, crossed logs, flickering flame + light.
 // Only the 2 newest fires get a real light to keep mobile GPUs happy.
-function Campfire({ x, y, z, lit }: { x: number; y: number; z: number; lit: boolean }) {
+// A burned-out fire keeps its stones and charred logs but loses flame and light.
+function Campfire({ x, y, z, lit, out }: { x: number; y: number; z: number; lit: boolean; out: boolean }) {
   const flames = useRef<Group>(null);
   const light = useRef<PointLight>(null);
 
@@ -32,10 +33,10 @@ function Campfire({ x, y, z, lit }: { x: number; y: number; z: number; lit: bool
       {[0, 1, 2].map((i) => (
         <mesh key={i} position-y={0.12} rotation={[0.25, (i / 3) * Math.PI, 0]}>
           <cylinderGeometry args={[0.06, 0.07, 0.9, 6]} />
-          <meshLambertMaterial color="#4a3322" />
+          <meshLambertMaterial color={out ? "#2a2420" : "#4a3322"} />
         </mesh>
       ))}
-      <group ref={flames} position-y={0.3}>
+      <group ref={flames} position-y={0.3} visible={!out}>
         {(
           [
             [0, 0.6, '#ff6a1a'],
@@ -49,7 +50,7 @@ function Campfire({ x, y, z, lit }: { x: number; y: number; z: number; lit: bool
           </mesh>
         ))}
       </group>
-      {lit && <pointLight ref={light} color="#ff9045" distance={13} decay={1.6} position-y={1} />}
+      {lit && !out && <pointLight ref={light} color="#ff9045" distance={13} decay={1.6} position-y={1} />}
     </group>
   );
 }
@@ -60,7 +61,7 @@ export function Campfires({ version }: { version: number }) {
   return (
     <>
       {fires.map((f, i) => (
-        <Campfire key={i} x={f.x} y={f.y} z={f.z} lit={i >= fires.length - 2} />
+        <Campfire key={i} x={f.x} y={f.y} z={f.z} lit={i >= fires.length - 2} out={f.out} />
       ))}
     </>
   );

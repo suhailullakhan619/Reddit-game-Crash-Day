@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useMemo, useRef } from 'react';
+import { forwardRef, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   BufferGeometry,
   CapsuleGeometry,
@@ -7,11 +7,15 @@ import {
   IcosahedronGeometry,
   LatheGeometry,
   MeshLambertMaterial,
+  CanvasTexture,
+  RepeatWrapping,
+  SRGBColorSpace,
   SphereGeometry,
   Vector2,
   type Group,
 } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeStatic } from './shared';
 
 // A procedurally built survivor (~1.78 m) with a simple hierarchical rig.
 // Two-bone limbs (hip/knee, shoulder/elbow) give a natural walk without skinning.
@@ -45,8 +49,104 @@ const COLORS = {
   eye: '#1a1410',
 };
 
+// Lambert materials: the stylized look needs no PBR, and Lambert is far cheaper on phones.
 function mat(color: string) {
   return new MeshLambertMaterial({ color: new Color(color) });
+}
+
+function canvasTex(w: number, h: number, draw: (g: CanvasRenderingContext2D) => void, repeatX = 1, repeatY = 1) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  draw(c.getContext('2d')!);
+  const t = new CanvasTexture(c);
+  t.colorSpace = SRGBColorSpace;
+  t.wrapS = t.wrapT = RepeatWrapping;
+  t.repeat.set(repeatX, repeatY);
+  return t;
+}
+
+// Faded red flannel: two crossing stripe sets over a rust base, with dirt smudges.
+function flannel() {
+  return canvasTex(
+    128,
+    128,
+    (g) => {
+      g.fillStyle = '#9c3b22';
+      g.fillRect(0, 0, 128, 128);
+      g.globalAlpha = 0.55;
+      g.fillStyle = '#2a1712';
+      for (const p of [0, 64]) {
+        g.fillRect(p + 8, 0, 18, 128);
+        g.fillRect(0, p + 8, 128, 18);
+      }
+      g.globalAlpha = 0.35;
+      g.fillStyle = '#e0a070';
+      for (const p of [0, 64]) {
+        g.fillRect(p + 40, 0, 3, 128);
+        g.fillRect(0, p + 40, 128, 3);
+      }
+      g.globalAlpha = 0.18;
+      g.fillStyle = '#3b2a18';
+      for (let i = 0; i < 14; i++) {
+        g.beginPath();
+        g.ellipse(Math.random() * 128, Math.random() * 128, 4 + Math.random() * 10, 3 + Math.random() * 6, 0, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.globalAlpha = 1;
+    },
+    3,
+    2
+  );
+}
+
+// Worn denim: diagonal twill lines over blue noise, lighter at the knees.
+function denim() {
+  return canvasTex(
+    128,
+    128,
+    (g) => {
+      g.fillStyle = '#34445c';
+      g.fillRect(0, 0, 128, 128);
+      for (let i = 0; i < 1600; i++) {
+        const v = 40 + Math.random() * 50;
+        g.fillStyle = 'rgba(' + v + ',' + (v + 18) + ',' + (v + 45) + ',0.35)';
+        g.fillRect(Math.random() * 128, Math.random() * 128, 1, 1);
+      }
+      g.strokeStyle = 'rgba(150, 170, 200, 0.14)';
+      g.lineWidth = 1;
+      for (let x = -128; x < 128; x += 4) {
+        g.beginPath();
+        g.moveTo(x, 128);
+        g.lineTo(x + 128, 0);
+        g.stroke();
+      }
+    },
+    2,
+    2
+  );
+}
+
+// Olive canvas backpack fabric.
+function canvasCloth() {
+  return canvasTex(
+    64,
+    64,
+    (g) => {
+      g.fillStyle = '#5b6843';
+      g.fillRect(0, 0, 64, 64);
+      for (let y = 0; y < 64; y += 2) {
+        g.fillStyle = y % 4 ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.05)';
+        g.fillRect(0, y, 64, 1);
+      }
+      for (let x = 0; x < 64; x += 2) {
+        g.fillStyle = 'rgba(0,0,0,0.06)';
+        g.fillRect(x, 0, 1, 64);
+      }
+    },
+    3,
+    3
+  );
 }
 
 function lathe(points: [number, number][], segments = 12) {
@@ -58,7 +158,10 @@ function lathe(points: [number, number][], segments = 12) {
 
 export type Weapon = 'none' | 'knife' | 'spear';
 
-export const Survivor = forwardRef<SurvivorHandle, { shadows: boolean; weapon: Weapon }>(function Survivor({ shadows, weapon }, ref) {
+export const Survivor = forwardRef<SurvivorHandle, { shadows: boolean; weapon: Weapon; bow?: boolean }>(function Survivor(
+  { shadows, weapon, bow = false },
+  ref,
+) {
   const hips = useRef<Group>(null);
   const spine = useRef<Group>(null);
   const head = useRef<Group>(null);
@@ -76,20 +179,20 @@ export const Survivor = forwardRef<SurvivorHandle, { shadows: boolean; weapon: W
       skin: mat(COLORS.skin),
       skinShade: mat(COLORS.skinShade),
       hair: mat(COLORS.hair),
-      shirt: mat(COLORS.shirt),
+      shirt: new MeshLambertMaterial({ map: flannel() }),
       shirtDark: mat(COLORS.shirtDark),
       under: mat(COLORS.undershirt),
-      pants: mat(COLORS.pants),
+      pants: new MeshLambertMaterial({ map: denim() }),
       belt: mat(COLORS.belt),
       boot: mat(COLORS.boot),
       sole: mat(COLORS.sole),
-      pack: mat(COLORS.pack),
+      pack: new MeshLambertMaterial({ map: canvasCloth() }),
       packDark: mat(COLORS.packDark),
       matRoll: mat(COLORS.mat),
       strap: mat(COLORS.strap),
       eye: mat(COLORS.eye),
       stone: mat('#77756c'),
-      steel: new MeshLambertMaterial({ color: '#c9ced3' }),
+      steel: mat('#8e949a'),
     }),
     []
   );
@@ -301,6 +404,9 @@ export const Survivor = forwardRef<SurvivorHandle, { shadows: boolean; weapon: W
 
   const cs = shadows;
 
+  // each rig segment is rigid: merge its meshes (plain colours into one vertex-coloured draw)
+  useLayoutEffect(() => (hips.current ? mergeStatic(hips.current) : undefined), [weapon, bow, cs]);
+
   return (
     <group ref={hips} position-y={0.9}>
       {/* pelvis + belt */}
@@ -356,6 +462,18 @@ export const Survivor = forwardRef<SurvivorHandle, { shadows: boolean; weapon: W
           <group ref={foreL} position-y={-0.29}>
             <mesh geometry={g.fore} material={m.skin} castShadow={cs} />
             <mesh geometry={g.hand} material={m.skinShade} />
+            {bow && (
+              // recurve bow held upright in the left hand, string toward the body
+              // (arc in local XY with the grip at the hand; the group turns +X to forward +Z)
+              <group position={[0, -0.26, 0]} rotation-y={-Math.PI / 2}>
+                <mesh material={m.belt} castShadow={cs} rotation-z={-0.3 * Math.PI} position-x={-0.75}>
+                  <torusGeometry args={[0.75, 0.018, 4, 16, Math.PI * 0.6]} />
+                </mesh>
+                <mesh position-x={-0.31} material={m.under}>
+                  <cylinderGeometry args={[0.004, 0.004, 1.21, 3]} />
+                </mesh>
+              </group>
+            )}
           </group>
         </group>
         <group ref={upperR} position={[-0.215, 0.5, 0]}>
