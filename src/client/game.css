@@ -355,3 +355,8 @@ body,
 .drink.on {
   opacity: 1;
 }
+
+/* owner-only long-press target for the hidden test tools */
+.hud-left.secret {
+  pointer-events: auto;
+}

@@ -58,6 +58,33 @@ export const QUALITY: Record<Quality, { dpr: number; shadows: boolean; shadowMap
 };
 
 // ---------------------------------------------------------------------------------------
+// Near-camera fade for foliage: fragments closer than ~3 m to the camera dissolve with a
+// screen-space dither, so the follow camera can stay at a fixed distance in dense jungle
+// without the view filling with leaves (and without zooming in and out to avoid them).
+export function nearFade(m: MeshLambertMaterial) {
+  // chains onto an existing hook (e.g. addWind) instead of replacing it
+  const prev = m.onBeforeCompile.bind(m);
+  const prevKey = m.customProgramCacheKey.bind(m);
+  m.onBeforeCompile = (shader, renderer) => {
+    prev(shader, renderer);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <clipping_planes_fragment>',
+      `#include <clipping_planes_fragment>
+      {
+        float camD = length(vViewPosition);
+        if (camD < 3.4) {
+          float keep = clamp((camD - 1.4) / 2.0, 0.0, 1.0);
+          float n = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
+          if (n > keep) discard;
+        }
+      }`
+    );
+  };
+  m.customProgramCacheKey = () => `${prevKey()}|near-fade`;
+  return m;
+}
+
+// ---------------------------------------------------------------------------------------
 // Static mesh merging: cuts draw calls on characters and props built from many small meshes.
 // Meshes are grouped per container (direct children of each group, or the whole subtree in
 // `deep` mode) and merged per material. Plain-colour Lambert meshes are baked into vertex
@@ -65,7 +92,8 @@ export const QUALITY: Record<Quality, { dpr: number; shadows: boolean; shadowMap
 // The originals stay in the scene graph (hidden), so React can still mount/unmount them;
 // the returned cleanup restores them.
 
-const flatMaterial = new MeshLambertMaterial({ vertexColors: true });
+// shared by every merged prop; dissolves near the lens like foliage (camera never sits inside the wreck)
+const flatMaterial = nearFade(new MeshLambertMaterial({ vertexColors: true }));
 const mergeInv = new Matrix4();
 const mergeTmp = new Matrix4();
 

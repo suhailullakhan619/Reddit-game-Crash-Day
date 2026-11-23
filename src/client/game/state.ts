@@ -46,6 +46,10 @@ export const run = {
   arrows: 0,
   startItem: null as StartItem | null,
   campfires: [] as { x: number; y: number; z: number; age: number; out: boolean }[],
+  shelters: [] as { x: number; y: number; z: number; rot: number }[],
+  // parachute supply crates (days 2 and 4): fall from the sky, then wait to be opened
+  drops: [] as { x: number; z: number; ground: number; y: number; landed: boolean; opened: boolean }[],
+  dropDays: [] as number[],
   rescueDone: false, // rescue cinematic finished: the end card may show
   deathCause: null as DeathCause | null,
   lastHurt: 'injuries' as DeathCause,
@@ -121,13 +125,14 @@ export function rescue() {
   emit();
 }
 
-export type Recipe = { id: 'spear' | 'bow' | 'arrows' | 'campfire' | 'medkit'; label: string; cost: Partial<Record<ItemKind, number>>; hint: string };
+export type Recipe = { id: 'spear' | 'bow' | 'arrows' | 'campfire' | 'shelter' | 'medkit'; label: string; cost: Partial<Record<ItemKind, number>>; hint: string };
 
 export const RECIPES: Recipe[] = [
   { id: 'spear', label: 'Spear', cost: { wood: 2, stone: 1 }, hint: 'Fight back' },
   { id: 'bow', label: 'Bow + 4 arrows', cost: { wood: 3, herb: 2 }, hint: 'Shoot from range' },
   { id: 'arrows', label: '3 arrows', cost: { wood: 1, stone: 1 }, hint: 'Ammo for the bow' },
   { id: 'campfire', label: 'Campfire', cost: { wood: 4, stone: 3 }, hint: 'Warmth · keeps the tiger away' },
+  { id: 'shelter', label: 'Lean-to shelter', cost: { wood: 5, herb: 2 }, hint: 'Stay warm · heal while resting' },
   { id: 'medkit', label: 'Herbal poultice', cost: { herb: 3 }, hint: '+35 health' },
 ];
 
@@ -146,6 +151,9 @@ export function resetRun() {
   run.bow = false;
   run.arrows = 0;
   run.rescueDone = false;
+  run.shelters = [];
+  run.drops = [];
+  run.dropDays = [];
   rescueFx.active = false;
   rescueFx.t = 0;
   run.startItem = null;

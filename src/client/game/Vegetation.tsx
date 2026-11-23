@@ -12,7 +12,7 @@ import {
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Chunked, type Inst } from './Chunked';
 import { addWind } from './fx';
-import { PALETTE } from './shared';
+import { nearFade, PALETTE } from './shared';
 import { mulberry32, WATER_LEVEL, WORLD_HALF, type World } from './world';
 
 const dummy = new Object3D();
@@ -232,6 +232,8 @@ export function Vegetation({ world, shadows, density }: { world: World; shadows:
     const trunk = new MeshLambertMaterial({ vertexColors: true, color: PALETTE.trunk });
     const palmTrunk = new MeshLambertMaterial({ vertexColors: true, color: '#7a6248' });
     const rock = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
+    // anything tall enough to get between the follow camera and the player dissolves near the lens
+    for (const m of [crown, palm, fern, bush, trunk, palmTrunk]) nearFade(m);
     return { crown, palm, fern, grass: grassM, bush, trunk, palmTrunk, rock };
   }, []);
 

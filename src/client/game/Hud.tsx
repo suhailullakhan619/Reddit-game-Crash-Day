@@ -45,6 +45,7 @@ const RECIPE_ICON: Record<Recipe['id'], string> = {
   spear: 'M4 20L17 7M14 4h6v6M17 7l-3-3M17 7l3 3',
   bow: BOW_ICON,
   arrows: ARROW_ICON,
+  shelter: 'M3 20L12 5l9 15M7 20l5-8 5 8M3 20h18',
   campfire: 'M5 21l14-4M5 17l14 4M12 3c1 3 4 4 4 8a4 4 0 0 1-8 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-4 0-7z',
   medkit: ITEM_ICON.medkit,
 };
@@ -83,11 +84,21 @@ function consumeItem(kind: ItemKind) {
       toast(run.poisoned ? 'Venom drawn out. Wounds bandaged.' : 'Wounds bandaged. +40 health');
       run.poisoned = false;
       break;
-    case 'meat':
-      survival.hunger = Math.min(100, survival.hunger + 35);
-      sfxPickup();
-      toast('Tough and gamey, but filling.');
+    case 'meat': {
+      // cooking over a lit fire makes meat far more nourishing
+      const atFire = run.campfires.some((f) => !f.out && Math.hypot(f.x - playerPos.x, f.z - playerPos.z) < 3.5);
+      if (atFire) {
+        survival.hunger = Math.min(100, survival.hunger + 60);
+        survival.health = Math.min(100, survival.health + 10);
+        sfxCraft();
+        toast('Cooked over the fire. Hot, filling: +60 food, +10 health.');
+      } else {
+        survival.hunger = Math.min(100, survival.hunger + 30);
+        sfxPickup();
+        toast('Raw and gamey. Cook it at a campfire for double.');
+      }
       break;
+    }
     case 'flare':
       tiger.scare = 1;
       sfxCraft();
@@ -113,6 +124,16 @@ function craft(r: Recipe, world: World) {
     }
     run.campfires.push({ x, y, z, age: 0, out: false });
   }
+  if (r.id === 'shelter') {
+    const x = playerPos.x + Math.sin(combat.facing) * 2.2;
+    const z = playerPos.z + Math.cos(combat.facing) * 2.2;
+    const y = world.heightAt(x, z);
+    if (y < WATER_LEVEL + 0.1) {
+      toast('Too wet here for a shelter.');
+      return;
+    }
+    run.shelters.push({ x, y, z, rot: combat.facing });
+  }
   for (const c of costOf(r)) run.inv[c.kind] -= c.n;
   if (r.id === 'spear') run.spear = true;
   if (r.id === 'bow') {
@@ -123,7 +144,13 @@ function craft(r: Recipe, world: World) {
   if (r.id === 'medkit') run.inv.medkit++;
   track('craft', r.id);
   sfxCraft();
-  toast(r.id === 'campfire' ? 'Fire lit. Warmth — and safety.' : `Crafted ${r.label}.`);
+  toast(
+    r.id === 'campfire'
+      ? 'Fire lit. Warmth — and safety.'
+      : r.id === 'shelter'
+        ? 'Shelter built. Rest inside to stay warm and heal.'
+        : `Crafted ${r.label}.`
+  );
   emit();
 }
 
@@ -311,7 +338,7 @@ export function Hud({ world }: { world: World }) {
                     aria-label={`${r.label}: ${owned ? 'owned' : cost.map((c) => `${c.n} ${ITEM_LABEL[c.kind]}`).join(', ')}`}
                     onClick={() => {
                       craft(r, world);
-                      if (r.id === 'campfire') setCraftOpen(false);
+                      if (r.id === 'campfire' || r.id === 'shelter') setCraftOpen(false);
                     }}
                   >
                     <span className="recipe-top">

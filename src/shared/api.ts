@@ -66,7 +66,8 @@ export type GameEvent =
   | 'death'
   | 'rescued'
   | 'shared'
-  | 'subscribed';
+  | 'subscribed'
+  | 'supply_crate';
 
 export type EventRequest = { name: GameEvent; detail?: string };
 

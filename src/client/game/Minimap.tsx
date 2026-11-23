@@ -79,6 +79,34 @@ function renderTerrain(world: World) {
   return c;
 }
 
+// supply crate: red square with a white cross, ringed so it stands out from loot dots
+function drawCrate(g: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  g.save();
+  g.fillStyle = '#d93a2b';
+  g.strokeStyle = '#f2ead8';
+  g.lineWidth = r * 0.22;
+  g.fillRect(x - r, y - r, r * 2, r * 2);
+  g.strokeRect(x - r, y - r, r * 2, r * 2);
+  g.beginPath();
+  g.moveTo(x - r * 0.55, y);
+  g.lineTo(x + r * 0.55, y);
+  g.moveTo(x, y - r * 0.55);
+  g.lineTo(x, y + r * 0.55);
+  g.stroke();
+  g.restore();
+}
+
+// shelter: small brown roof triangle
+function drawShelter(g: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  g.beginPath();
+  g.moveTo(x, y - r);
+  g.lineTo(x + r, y + r * 0.7);
+  g.lineTo(x - r, y + r * 0.7);
+  g.closePath();
+  g.fillStyle = '#c9a26b';
+  g.fill();
+}
+
 function drawWreck(g: CanvasRenderingContext2D, x: number, y: number, s: number) {
   g.save();
   g.translate(x, y);
@@ -173,6 +201,8 @@ export function Minimap({ world, pickups }: { world: World; pickups: Pickup[] })
         g.fillStyle = f.out ? '#7d7a70' : '#ffb347';
         g.fill();
       }
+      for (const h of run.shelters) drawShelter(g, h.x, h.z, 1.8);
+      for (const d of run.drops) if (!d.opened) drawCrate(g, d.x, d.z, 2.4);
       for (const p of pickups) {
         if (p.taken) continue;
         if (Math.abs(p.x - playerPos.x) > SMALL_SPAN * 0.75 || Math.abs(p.z - playerPos.z) > SMALL_SPAN * 0.75) continue;
@@ -210,6 +240,15 @@ export function Minimap({ world, pickups }: { world: World; pickups: Pickup[] })
         g.arc(x!, y!, 5 * s, 0, Math.PI * 2);
         g.fillStyle = f.out ? '#7d7a70' : '#ffb347';
         g.fill();
+      }
+      for (const h of run.shelters) {
+        const [x, y] = toCanvas(h.x, h.z, W);
+        drawShelter(g, x!, y!, 6 * s);
+      }
+      for (const d of run.drops) {
+        if (d.opened) continue;
+        const [x, y] = toCanvas(d.x, d.z, W);
+        drawCrate(g, x!, y!, 8 * s);
       }
       for (const p of pickups) {
         if (p.taken) continue;

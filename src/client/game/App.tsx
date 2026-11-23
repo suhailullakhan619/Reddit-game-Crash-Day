@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { causePair, dailyFor, hasCause, type Daily } from '../../shared/daily';
 import type { InitResponse } from '../../shared/api';
 import { Ambient } from './Ambient';
 import { Arrows, clearArrows } from './Arrows';
 import { Rescue } from './Rescue';
+import { Shelters } from './Shelters';
+import { SupplyDrops } from './SupplyDrops';
 import { Adaptive } from './Adaptive';
 import { Atmosphere } from './Atmosphere';
 import { Boars } from './Boars';
@@ -80,6 +82,25 @@ export function App() {
   const [clockEl, setClockEl] = useState<HTMLDivElement | null>(null);
   const [runId, setRunId] = useState(0);
   const [tester, setTester] = useState(false);
+  // owner-only test tools exist only in playtest builds (__TEST_TOOLS__), and even there
+  // stay invisible until a 1.5 s long-press on the clock
+  const [testOpen, setTestOpen] = useState(false);
+  const pressTimer = useRef<number | null>(null);
+  const endPress = () => {
+    if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
+    pressTimer.current = null;
+  };
+  const secretPress = __TEST_TOOLS__ && tester
+    ? {
+        onPointerDown: () => {
+          endPress();
+          pressTimer.current = window.setTimeout(() => setTestOpen((v) => !v), 1500);
+        },
+        onPointerUp: endPress,
+        onPointerLeave: endPress,
+        onPointerCancel: endPress,
+      }
+    : {};
   const version = useSyncExternalStore(subscribe, getVersion);
 
   const world = useMemo(() => {
@@ -193,6 +214,8 @@ export function App() {
           {inIntro ? <CrashIntro world={world} causes={[daily.cause, daily.second]} /> : <Wreck world={world} shadows={q.shadows} />}
           <Pickups pickups={pickups} version={version} />
           <Campfires version={version} />
+          <Shelters version={version} />
+          <SupplyDrops world={world} />
           <Player world={world} shadows={q.shadows} pickups={pickups} />
           <Tiger world={world} shadows={q.shadows} />
           <Snakes world={world} />
@@ -213,7 +236,7 @@ export function App() {
         <>
           <StatRings />
           <div className="hud-top">
-            <div className="hud-left">
+            <div className={__TEST_TOOLS__ && tester ? "hud-left secret" : "hud-left"} {...secretPress}>
               <div className="crash-tag">{causePair(daily)}</div>
               <div className="clock" ref={setClockEl} />
             </div>
@@ -234,7 +257,7 @@ export function App() {
 
       <Hud world={world} />
       <Minimap world={world} pickups={pickups} />
-      {tester && <TestPanel />}
+      {__TEST_TOOLS__ && tester && testOpen && <TestPanel />}
       {inIntro && <IntroOverlay key={runId} causes={[daily.cause, daily.second]} />}
       <EndCard daily={daily} onRetry={retry} />
     </div>

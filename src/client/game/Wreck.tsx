@@ -19,7 +19,7 @@ import {
   type PointLight,
   type Points,
 } from 'three';
-import { mergeStatic, playerPos } from './shared';
+import { mergeStatic, nearFade, playerPos } from './shared';
 import { mulberry32, type World } from './world';
 
 // A crashed single-engine high-wing bush plane (generic, unbranded).
@@ -202,19 +202,19 @@ export function Wreck({ world, shadows }: { world: World; shadows: boolean }) {
 
   const mats = useMemo(
     () => ({
-      hull: new MeshLambertMaterial({ vertexColors: true }),
-      paint: new MeshLambertMaterial({ color: '#e2dfd5' }),
-      stripe: new MeshLambertMaterial({ color: '#c2452d' }),
-      metal: new MeshLambertMaterial({ color: '#6c7175' }),
-      darkMetal: new MeshLambertMaterial({ color: '#2e3134' }),
+      hull: nearFade(new MeshLambertMaterial({ vertexColors: true })),
+      paint: nearFade(new MeshLambertMaterial({ color: '#e2dfd5' })),
+      stripe: nearFade(new MeshLambertMaterial({ color: '#c2452d' })),
+      metal: nearFade(new MeshLambertMaterial({ color: '#6c7175' })),
+      darkMetal: nearFade(new MeshLambertMaterial({ color: '#2e3134' })),
       glass: new MeshLambertMaterial({
         color: '#1b2a33',
         transparent: true,
         opacity: 0.88,
       }),
-      rubber: new MeshLambertMaterial({ color: '#1c1b1a' }),
-      seat: new MeshLambertMaterial({ color: '#4a3b30' }),
-      cargo: new MeshLambertMaterial({ color: '#6b5236' }),
+      rubber: nearFade(new MeshLambertMaterial({ color: '#1c1b1a' })),
+      seat: nearFade(new MeshLambertMaterial({ color: '#4a3b30' })),
+      cargo: nearFade(new MeshLambertMaterial({ color: '#6b5236' })),
       reg: new MeshLambertMaterial({ map: registrationTexture(), transparent: true, depthWrite: false, side: DoubleSide }),
     }),
     []

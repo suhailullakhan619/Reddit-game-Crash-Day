@@ -35,7 +35,8 @@ export default defineConfig([
     ignores: ['src/server/**/*.{ts,tsx}'],
     languageOptions: {
       ecmaVersion: 2023,
-      globals: globals.browser,
+      // __TEST_TOOLS__: build-time flag defined in vite.config.ts
+      globals: { ...globals.browser, __TEST_TOOLS__: 'readonly' },
       parserOptions: {
         project: ['./tools/tsconfig.client.json'],
         tsconfigRootDir: import.meta.dirname,

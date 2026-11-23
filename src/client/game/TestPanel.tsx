@@ -96,6 +96,28 @@ export function TestPanel() {
           >
             Bow +10
           </button>
+          <button
+            type="button"
+            onClick={act(() => {
+              // crate falls 1.6 m ahead (ground taken as the player's height) so it can be opened at once
+              const x = playerPos.x - Math.sin(combat.camYaw) * 1.6;
+              const z = playerPos.z - Math.cos(combat.camYaw) * 1.6;
+              run.drops.push({ x, z, ground: playerPos.y, y: playerPos.y + 25, landed: false, opened: false });
+            })}
+          >
+            Drop crate
+          </button>
+          <button
+            type="button"
+            onClick={act(() => {
+              run.inv.wood += 10;
+              run.inv.stone += 6;
+              run.inv.herb += 6;
+              run.inv.meat += 2;
+            })}
+          >
+            Materials
+          </button>
           <button type="button" onClick={act(() => rescue())}>
             Rescue now
           </button>

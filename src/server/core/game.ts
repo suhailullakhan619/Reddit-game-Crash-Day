@@ -15,7 +15,7 @@ import { dayKeyFor } from '../../shared/daily';
 const DAY_TTL = 60 * 60 * 24 * 8; // keep a week of history
 
 const CAUSES: DeathCause[] = ['tiger', 'snake', 'venom', 'boar', 'gator', 'thirst', 'hunger', 'cold', 'injuries'];
-const EVENTS: GameEvent[] = ['crash_start', 'item_grabbed', 'brace', 'day_survived', 'tiger_encounter', 'craft', 'death', 'rescued', 'shared', 'subscribed'];
+const EVENTS: GameEvent[] = ['crash_start', 'item_grabbed', 'brace', 'day_survived', 'tiger_encounter', 'craft', 'death', 'rescued', 'shared', 'subscribed', 'supply_crate'];
 
 export function today() {
   return dayKeyFor(new Date());
